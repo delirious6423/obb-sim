@@ -1,0 +1,12 @@
+# Build output
+/target
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Rust leftovers
+**/*.rs.bk
+*.pdb
