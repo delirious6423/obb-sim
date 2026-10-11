@@ -12,8 +12,9 @@ use crate::player::{
 use crate::rating::{Kind, Model, normal, uniform};
 use crate::scout::asking_salary;
 use crate::state::{
-    CREDIT, ClubState, Finance, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB, Phase,
-    ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules, TEAMS, TRADE_MAX_PER_SIDE, World,
+    CREDIT, ClubState, Finance, GATE_SHARE, HOME_GAMES, MAJORS_PER_KIND, MIN_SALARY,
+    OFFERS_PER_CLUB, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules, Stadium, Stance, TEAMS,
+    TICKET_RANGE, TICKET_REF, TRADE_MAX_PER_SIDE, World,
 };
 use crate::util::{stream, tag};
 
@@ -189,6 +190,18 @@ impl World {
         Ok(())
     }
 
+    /// Owners settle money matters in the offseason.
+    fn check_owner_window(&self) -> Result<(), WorldError> {
+        if matches!(
+            self.phase,
+            Phase::Offseason | Phase::Progressed | Phase::Drafting | Phase::FreeAgency
+        ) {
+            Ok(())
+        } else {
+            Err(WorldError::Phase(self.phase))
+        }
+    }
+
     fn check_team(&self, team: u8) -> Result<(), WorldError> {
         if usize::from(team) < self.clubs.len() {
             Ok(())
@@ -268,6 +281,55 @@ impl World {
                 Ok(vec![Event::BudgetSet {
                     team: *team,
                     payroll: *payroll,
+                }])
+            }
+            Command::SetTicketPrice { team, price } => {
+                self.check_team(*team)?;
+                self.check_owner_window()?;
+                if !price.is_finite() || *price < TICKET_RANGE.0 || *price > TICKET_RANGE.1 {
+                    return Err(WorldError::Invalid(format!(
+                        "ticket price must be between {} and {}",
+                        TICKET_RANGE.0, TICKET_RANGE.1
+                    )));
+                }
+                Ok(vec![Event::TicketSet {
+                    team: *team,
+                    price: *price,
+                }])
+            }
+            Command::BuildStadium { team, amount } => {
+                self.check_team(*team)?;
+                self.check_owner_window()?;
+                if !amount.is_finite() || *amount <= 0.0 || *amount > 200.0 {
+                    return Err(WorldError::Invalid(
+                        "a ballpark project costs more than 0 and at most 200".into(),
+                    ));
+                }
+                if self.clubs[usize::from(*team)].cash - amount < -CREDIT {
+                    return Err(WorldError::Invalid(
+                        "the club cannot pay for the ballpark project".into(),
+                    ));
+                }
+                Ok(vec![Event::StadiumBuilt {
+                    team: *team,
+                    amount: *amount,
+                }])
+            }
+            Command::SetStance { team, stance } => {
+                self.check_team(*team)?;
+                self.check_owner_window()?;
+                Ok(vec![Event::StanceSet {
+                    team: *team,
+                    stance: *stance,
+                }])
+            }
+            Command::SetRules { rules } => {
+                if !matches!(self.phase, Phase::Offseason | Phase::Progressed) {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                rules.check().map_err(WorldError::Invalid)?;
+                Ok(vec![Event::RulesSet {
+                    rules: rules.clone(),
                 }])
             }
             Command::ProposeTrade {
@@ -455,13 +517,22 @@ impl World {
         let n = self.clubs.len();
         let mut hype = vec![0.0; n];
         let mut local = vec![0.0; n];
+        let mut crowd = vec![0.0; n];
+        let mut gate = vec![0.0; n];
         let mut win_pct = vec![0.5; n];
         for i in 0..n {
             let r = &self.last_records[i];
             win_pct[i] = f64::from(r.w) / f64::from((r.w + r.l).max(1));
             hype[i] =
                 (0.6 * self.clubs[i].hype + 0.4 * (1.0 + 4.0 * (win_pct[i] - 0.5))).clamp(0.4, 1.8);
-            local[i] = 190.0 * self.clubs[i].market * (0.75 + 0.5 * hype[i]);
+            // What the market is worth this year; gate receipts are the
+            // part the owner can move with the ticket price and the park.
+            let market_local = 190.0 * self.clubs[i].market * (0.75 + 0.5 * hype[i]);
+            let base = GATE_SHARE * market_local * 1000.0 / (HOME_GAMES * TICKET_REF);
+            let st = &self.clubs[i].stadium;
+            crowd[i] = st.crowd(base);
+            gate[i] = crowd[i] * HOME_GAMES * st.ticket / 1000.0;
+            local[i] = (1.0 - GATE_SHARE) * market_local + gate[i];
         }
         let pool = self.rules.revenue_sharing * local.iter().sum::<f64>();
         let mut appearances = vec![0u32; n];
@@ -478,7 +549,8 @@ impl World {
                 + 85.0
                 + 6.0 * f64::from(appearances[i]);
             let payroll = self.payroll(i);
-            let other = 80.0 + 10.0 * self.clubs[i].market;
+            let st = &self.clubs[i].stadium;
+            let other = 80.0 + 10.0 * self.clubs[i].market + 0.1 * st.capacity * st.quality;
             let profit = revenue - payroll - other;
             let cash = self.clubs[i].cash;
             let dividend = ((cash + profit) - 0.35 * revenue).max(0.0) * 0.6;
@@ -489,6 +561,8 @@ impl World {
                     other,
                     spent: self.clubs[i].spent,
                     dividend,
+                    attendance: crowd[i],
+                    gate: gate[i],
                 },
                 ClubFinanceState {
                     cash: cash + profit - dividend,
@@ -680,6 +754,8 @@ impl World {
                     win_pct_prev: 0.5,
                     players: Default::default(),
                     tactics: Default::default(),
+                    stadium: Stadium::for_market(markets[t]),
+                    stance: Stance::default(),
                 }
             })
             .collect();

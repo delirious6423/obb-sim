@@ -6,7 +6,7 @@ use season::{Record, Series};
 use thiserror::Error;
 
 use crate::player::{Contract, Level, Player, PlayerId};
-use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules, Tactics};
+use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules, Stance, Tactics};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Command {
@@ -29,6 +29,25 @@ pub enum Command {
     SetBudget {
         team: u8,
         payroll: f64,
+    },
+    /// Average ticket price, dollars.
+    SetTicketPrice {
+        team: u8,
+        price: f64,
+    },
+    /// Spend `amount` (millions) on the ballpark: more seats and better quality.
+    BuildStadium {
+        team: u8,
+        amount: f64,
+    },
+    /// Tell the general manager what the club is trying to do.
+    SetStance {
+        team: u8,
+        stance: Stance,
+    },
+    // Commissioner, offseason
+    SetRules {
+        rules: Rules,
     },
     // General manager
     DraftPlayer {
@@ -84,8 +103,12 @@ impl Command {
             | Command::ProgressPlayers
             | Command::OpenDraft
             | Command::CloseDraft
-            | Command::StartSeason => Role::Commissioner,
-            Command::SetBudget { .. } => Role::Owner,
+            | Command::StartSeason
+            | Command::SetRules { .. } => Role::Commissioner,
+            Command::SetBudget { .. }
+            | Command::SetTicketPrice { .. }
+            | Command::BuildStadium { .. }
+            | Command::SetStance { .. } => Role::Owner,
             Command::DraftPlayer { .. }
             | Command::PassPick { .. }
             | Command::SignFreeAgent { .. }
@@ -102,6 +125,9 @@ impl Command {
     pub fn team(&self) -> Option<u8> {
         match self {
             Command::SetBudget { team, .. }
+            | Command::SetTicketPrice { team, .. }
+            | Command::BuildStadium { team, .. }
+            | Command::SetStance { team, .. }
             | Command::DraftPlayer { team, .. }
             | Command::PassPick { team }
             | Command::SignFreeAgent { team, .. }
@@ -221,6 +247,21 @@ pub enum Event {
     BudgetSet {
         team: u8,
         payroll: f64,
+    },
+    TicketSet {
+        team: u8,
+        price: f64,
+    },
+    StadiumBuilt {
+        team: u8,
+        amount: f64,
+    },
+    StanceSet {
+        team: u8,
+        stance: Stance,
+    },
+    RulesSet {
+        rules: Rules,
     },
     PlayersProgressed {
         year: i32,

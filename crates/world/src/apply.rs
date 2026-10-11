@@ -3,8 +3,8 @@
 use crate::command::{ClubFinanceState, Event, Founding, Line, Outcome, WorldError};
 use crate::player::{Contract, Level, Player, PlayerId};
 use crate::state::{
-    Draft, InSeason, MAJORS_PER_KIND, MINOR_COST, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND,
-    SeasonRecord, World,
+    CAPACITY_MAX, CREDIT, Draft, InSeason, MAJORS_PER_KIND, MINOR_COST, Phase, QUALITY_MAX,
+    ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, SeasonRecord, TICKET_RANGE, World,
 };
 
 fn invalid<T>(msg: impl Into<String>) -> Result<T, WorldError> {
@@ -190,6 +190,35 @@ impl World {
                     return invalid("budget outside the payroll limits");
                 }
             }
+            Event::TicketSet { team, price } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+                if !price.is_finite() || *price < TICKET_RANGE.0 || *price > TICKET_RANGE.1 {
+                    return invalid("ticket price outside the allowed range");
+                }
+            }
+            Event::StadiumBuilt { team, amount } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+                if !amount.is_finite() || *amount <= 0.0 || *amount > 200.0 {
+                    return invalid("ballpark project outside the allowed size");
+                }
+                if self.clubs[usize::from(*team)].cash - amount < -CREDIT {
+                    return invalid("the club cannot pay for the ballpark project");
+                }
+            }
+            Event::StanceSet { team, .. } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+            }
+            Event::RulesSet { rules } => {
+                if let Err(m) = rules.check() {
+                    return Err(WorldError::Invalid(m));
+                }
+            }
             Event::PlayersProgressed { updates, era, .. } => {
                 if era.iter().flatten().any(|x| !x.is_finite()) {
                     return invalid("era shift must be finite");
@@ -339,6 +368,8 @@ impl World {
                     c.spent = 0.0;
                     c.hype = hype;
                     c.win_pct_prev = win_pct_prev;
+                    // Ballparks wear: quality drifts back toward ordinary.
+                    c.stadium.quality = 1.0 + (c.stadium.quality - 1.0) * 0.9;
                     self.finances[i].push(fin.clone());
                 }
                 self.phase = Phase::Offseason;
@@ -352,6 +383,34 @@ impl World {
                     return Err(WorldError::Phase(self.phase));
                 }
                 self.club_mut(*team)?.budget = *payroll;
+                Ok(())
+            }
+            Event::TicketSet { team, price } => {
+                owner_window(self)?;
+                self.club_mut(*team)?.stadium.ticket = *price;
+                Ok(())
+            }
+            Event::StadiumBuilt { team, amount } => {
+                owner_window(self)?;
+                let c = self.club_mut(*team)?;
+                c.cash -= amount;
+                c.stadium.quality = (c.stadium.quality + amount / 600.0).min(QUALITY_MAX);
+                c.stadium.capacity = (c.stadium.capacity + 0.05 * amount).min(CAPACITY_MAX);
+                Ok(())
+            }
+            Event::StanceSet { team, stance } => {
+                owner_window(self)?;
+                self.club_mut(*team)?.stance = *stance;
+                Ok(())
+            }
+            Event::RulesSet { rules } => {
+                if !matches!(self.phase, Phase::Offseason | Phase::Progressed) {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                for c in &mut self.clubs {
+                    c.budget = c.budget.clamp(rules.payroll_floor, rules.payroll_cap);
+                }
+                self.rules = rules.clone();
                 Ok(())
             }
             Event::TradeProposed {
@@ -681,5 +740,17 @@ impl World {
                 Ok(())
             }
         }
+    }
+}
+
+/// Owners settle money matters in the offseason.
+fn owner_window(w: &World) -> Result<(), WorldError> {
+    if matches!(
+        w.phase,
+        Phase::Offseason | Phase::Progressed | Phase::Drafting | Phase::FreeAgency
+    ) {
+        Ok(())
+    } else {
+        Err(WorldError::Phase(w.phase))
     }
 }

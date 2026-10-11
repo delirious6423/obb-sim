@@ -148,6 +148,32 @@ pub struct Rules {
     pub international_rounds: u16,
 }
 
+impl Rules {
+    /// Whether the rules are inside the limits a commissioner may set.
+    ///
+    /// # Errors
+    /// The first limit that is broken.
+    pub fn check(&self) -> Result<(), String> {
+        let ok = |x: f64, lo: f64, hi: f64| x.is_finite() && (lo..=hi).contains(&x);
+        if !ok(self.payroll_floor, 40.0, 140.0) {
+            return Err("payroll floor must be between 40 and 140".into());
+        }
+        if !ok(self.payroll_cap, self.payroll_floor + 40.0, 420.0) {
+            return Err("payroll cap must be 40 to 420 and 40 above the floor".into());
+        }
+        if !ok(self.revenue_sharing, 0.0, 0.4) {
+            return Err("revenue sharing must be between 0 and 0.4".into());
+        }
+        if !ok(self.war_price, 2.0, 9.0) {
+            return Err("price per win must be between 2 and 9".into());
+        }
+        if !(1..=30).contains(&self.draft_rounds) || self.international_rounds > 15 {
+            return Err("draft rounds must be 1 to 30 and international rounds up to 15".into());
+        }
+        Ok(())
+    }
+}
+
 impl Default for Rules {
     fn default() -> Self {
         Self {
@@ -159,6 +185,70 @@ impl Default for Rules {
             international_rounds: 5,
         }
     }
+}
+
+/// Average ticket price the demand curve is anchored to, dollars.
+pub const TICKET_REF: f64 = 35.0;
+/// How fast attendance falls as the ticket price rises (a constant elasticity).
+pub const TICKET_ELASTICITY: f64 = 1.5;
+/// Share of a club's local revenue that is gate receipts at the reference price.
+pub const GATE_SHARE: f64 = 0.55;
+/// Home games per season.
+pub const HOME_GAMES: f64 = 81.0;
+/// Lowest and highest ticket price an owner may set, dollars.
+pub const TICKET_RANGE: (f64, f64) = (12.0, 150.0);
+/// Largest ballpark, thousands of seats.
+pub const CAPACITY_MAX: f64 = 70.0;
+/// Best ballpark quality (a demand multiplier).
+pub const QUALITY_MAX: f64 = 1.3;
+
+/// A club's ballpark and ticket price.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Stadium {
+    /// Seats, thousands.
+    pub capacity: f64,
+    /// Multiplies demand; 1.0 is an ordinary park, wears down by a tenth of its
+    /// distance from 1.0 each year.
+    pub quality: f64,
+    /// Average ticket price, dollars.
+    pub ticket: f64,
+}
+
+impl Stadium {
+    /// A park sized for a market (1.0 is average).
+    #[must_use]
+    pub fn for_market(market: f64) -> Self {
+        Self {
+            capacity: (30.0 + 12.0 * market).clamp(25.0, CAPACITY_MAX),
+            quality: 1.0,
+            ticket: TICKET_REF,
+        }
+    }
+
+    /// Average crowd per home game (thousands) given what the market would
+    /// bring to a park of average quality at the reference price.
+    #[must_use]
+    pub fn crowd(&self, base: f64) -> f64 {
+        let demand = base * libm::pow(self.ticket / TICKET_REF, -TICKET_ELASTICITY) * self.quality;
+        demand.min(self.capacity)
+    }
+}
+
+impl Default for Stadium {
+    fn default() -> Self {
+        Self::for_market(1.0)
+    }
+}
+
+/// What the owner tells the general manager the club is trying to do.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Stance {
+    /// Win now: veterans over prospects.
+    Contend,
+    #[default]
+    Balanced,
+    /// Build for later: prospects over veterans.
+    Rebuild,
 }
 
 /// How a club's field manager runs games.
@@ -187,6 +277,10 @@ pub struct ClubState {
     pub win_pct_prev: f64,
     pub players: BTreeSet<PlayerId>,
     pub tactics: Tactics,
+    #[serde(default)]
+    pub stadium: Stadium,
+    #[serde(default)]
+    pub stance: Stance,
 }
 
 /// A trade one club has put to another and the other has not yet answered.
@@ -248,6 +342,12 @@ pub struct Finance {
     /// Bonuses and released contracts paid during the offseason before.
     pub spent: f64,
     pub dividend: f64,
+    /// Average crowd per home game, thousands.
+    #[serde(default)]
+    pub attendance: f64,
+    /// Gate receipts.
+    #[serde(default)]
+    pub gate: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -501,6 +601,18 @@ impl World {
                 ))
         {
             return bad("the season under way does not match the clubs");
+        }
+        if s.clubs.iter().any(|c| {
+            let st = &c.stadium;
+            !(st.capacity.is_finite()
+                && st.quality.is_finite()
+                && st.ticket.is_finite()
+                && (1.0..=CAPACITY_MAX).contains(&st.capacity)
+                && (0.1..=QUALITY_MAX).contains(&st.quality)
+                && (TICKET_RANGE.0..=TICKET_RANGE.1).contains(&st.ticket))
+        }) || (s.phase != Phase::Unfounded && s.rules.check().is_err())
+        {
+            return bad("a ballpark or the rules are outside their limits");
         }
         let finite = |x: f64| x.is_finite();
         if s.clubs

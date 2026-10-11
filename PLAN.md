@@ -163,6 +163,23 @@ cargo run --release -p ui
 
 Phase 7 (owner and commissioner roles) and Phase 8 (online leagues) are NOT started. Waiting for the user to playtest and reply "continue".
 
+## Phase 7: owner and commissioner roles (in progress; started 2026-10-12 on the user's "keep going")
+
+Gate: any role human or AI over a 50-season run on 5 seeds, no runaway payrolls or insolvent teams.
+
+Design (decided)
+- Economy: each club has a `Stadium` (capacity in thousands of seats, quality multiplier, ticket price). Local revenue = 45% market (as before) + gate. Gate = crowd x 81 home games x price, where crowd = min(demand, capacity) and demand = a market base (the old local-revenue model, so default parks and the $35 reference price keep the old revenue level) x (price/35)^-1.5 x quality. So the owner's best price sits where demand just fills the park. Park upkeep is in `other`; quality wears 10% a year toward 1.0.
+- Owner commands (offseason only): `SetBudget` (existing), `SetTicketPrice`, `BuildStadium {amount}` (cash, credit line applies; +0.05k seats and +1/600 quality per $M), `SetStance {Contend|Balanced|Rebuild}` (directive to the GM).
+- Commissioner command (Offseason/Progressed only): `SetRules` within `Rules::check` limits; club budgets are clamped to the new floor/cap in the same event. Smarter commissioner uses it against runaway payrolls and insolvency.
+- Old saves load: new fields have serde defaults.
+
+- [x] World: stadium, attendance, gate in `settle`; owner/commissioner commands and events; restore validation; 7 tests (`crates/world/tests/economy.rs`)
+- [ ] Agents (`connect`): owner agent sets price, builds, stance; GM reads stance; commissioner agent adjusts rules; wired in the driver
+- [ ] Host + protocol: person may also be owner and/or commissioner; requests, views, advance gating
+- [ ] UI: owner screen, commissioner screen
+- [ ] Gate: 50 seasons x 5 seeds x role mixes (AI, scripted human incl. adversarial policies); no runaway payroll, no insolvency
+- [ ] Re-run Phase 3/4 gates that depend on the economy (stability, ladder, manager); reviewer; log
+
 ## Draft bands (Phase 3)
 
 Sources (looked up; nothing downloaded into the repo). All count *signed* draftees unless noted; "reached the majors" = at least one major-league appearance or at-bat, measured years after the draft, so the studies are slightly right-censored (late arrivals missing).
