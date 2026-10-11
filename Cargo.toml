@@ -12,6 +12,7 @@ members = [
     "crates/world",
     "crates/tactics",
     "crates/connect",
+    "crates/gm",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ season = { path = "crates/season" }
 world = { path = "crates/world" }
 tactics = { path = "crates/tactics" }
 connect = { path = "crates/connect" }
+gm = { path = "crates/gm" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

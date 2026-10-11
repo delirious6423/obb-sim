@@ -35,6 +35,9 @@ pub struct Seen {
     pub demand: f64,
     /// Salary still owed if released (own players only; zero otherwise).
     pub owed: f64,
+    /// Contract terms, public for any signed player (zero if none).
+    pub salary: f64,
+    pub years: u8,
 }
 
 impl Seen {
@@ -82,6 +85,32 @@ pub struct DraftObs {
     pub prospects: Vec<Seen>,
 }
 
+/// A player on another club, as this club sees him.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Held {
+    pub club: u8,
+    pub seen: Seen,
+}
+
+/// A trade offer put to this club.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IncomingOffer {
+    pub id: u32,
+    pub from: u8,
+    /// Players the other club would send here.
+    pub give: Vec<Seen>,
+    /// Players it asks for from this club.
+    pub get: Vec<Seen>,
+}
+
+/// What a general manager sees when trading is open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TradeObs {
+    pub incoming: Vec<IncomingOffer>,
+    /// Major- and top-minor-league players on every other club.
+    pub market: Vec<Held>,
+}
+
 /// Everything a general manager may see: the club's own books and roster,
 /// the public market, noisy scouting reports. No true talent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,6 +127,8 @@ pub struct GmObs {
     pub free_agents: Vec<Seen>,
     /// Present only while this club is on the clock.
     pub draft: Option<DraftObs>,
+    /// Present only when trading is open and the observation asked for it.
+    pub trade: Option<TradeObs>,
 }
 
 /// A general manager's window on the league.
@@ -130,6 +161,8 @@ impl<'a> GmView<'a> {
                 .contract
                 .filter(|_| p.team == Some(self.team))
                 .map_or(0.0, |c| c.salary * f64::from(c.years)),
+            salary: p.contract.map_or(0.0, |c| c.salary),
+            years: p.contract.map_or(0, |c| c.years),
         }
     }
 
@@ -171,7 +204,46 @@ impl<'a> GmView<'a> {
             roster: c.players.iter().map(|id| self.see(*id)).collect(),
             free_agents: self.w.free_agents.iter().map(|id| self.see(*id)).collect(),
             draft: self.draft(),
+            trade: None,
         }
+    }
+
+    /// The usual observation plus the trade market and offers put to this club.
+    #[must_use]
+    pub fn observe_trades(&self) -> GmObs {
+        let mut obs = self.observe();
+        let me = usize::from(self.team);
+        let market = self
+            .w
+            .clubs
+            .iter()
+            .enumerate()
+            .filter(|(t, _)| *t != me)
+            .flat_map(|(t, c)| {
+                c.players
+                    .iter()
+                    .filter(|id| self.w.players[*id].level <= Level::Triple)
+                    .map(move |id| (t as u8, *id))
+            })
+            .map(|(club, id)| Held {
+                club,
+                seen: self.see(id),
+            })
+            .collect();
+        let incoming = self
+            .w
+            .offers
+            .iter()
+            .filter(|o| o.to == self.team)
+            .map(|o| IncomingOffer {
+                id: o.id,
+                from: o.from,
+                give: o.give.iter().map(|id| self.see(*id)).collect(),
+                get: o.get.iter().map(|id| self.see(*id)).collect(),
+            })
+            .collect();
+        obs.trade = Some(TradeObs { incoming, market });
+        obs
     }
 }
 
@@ -257,7 +329,6 @@ pub fn free_agency_step(v: &GmObs) -> Option<Command> {
 #[must_use]
 pub fn set_levels(v: &GmObs) -> Vec<Command> {
     let roster = &v.roster;
-    let mut cash = v.cash;
     let mut out = Vec::new();
     for kind in [Kind::Batter, Kind::Pitcher] {
         let mut mine: Vec<&Seen> = roster.iter().filter(|s| s.kind == kind).collect();
@@ -283,13 +354,10 @@ pub fn set_levels(v: &GmObs) -> Vec<Command> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         for s in spare {
-            if cash - s.owed >= -CREDIT {
-                cash -= s.owed;
-                out.push(Command::ReleasePlayer {
-                    team: v.team,
-                    player: s.id,
-                });
-            }
+            out.push(Command::ReleasePlayer {
+                team: v.team,
+                player: s.id,
+            });
         }
     }
     out

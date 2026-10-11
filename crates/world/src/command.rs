@@ -49,6 +49,17 @@ pub enum Command {
         player: PlayerId,
         level: Level,
     },
+    ProposeTrade {
+        team: u8,
+        partner: u8,
+        give: Vec<PlayerId>,
+        get: Vec<PlayerId>,
+    },
+    RespondTrade {
+        team: u8,
+        offer: u32,
+        accept: bool,
+    },
     // Field manager
     SetTactics {
         team: u8,
@@ -74,7 +85,9 @@ impl Command {
             | Command::PassPick { .. }
             | Command::SignFreeAgent { .. }
             | Command::ReleasePlayer { .. }
-            | Command::SetLevel { .. } => Role::Gm,
+            | Command::SetLevel { .. }
+            | Command::ProposeTrade { .. }
+            | Command::RespondTrade { .. } => Role::Gm,
             Command::SetTactics { .. } => Role::FieldManager,
         }
     }
@@ -89,6 +102,8 @@ impl Command {
             | Command::SignFreeAgent { team, .. }
             | Command::ReleasePlayer { team, .. }
             | Command::SetLevel { team, .. }
+            | Command::ProposeTrade { team, .. }
+            | Command::RespondTrade { team, .. }
             | Command::SetTactics { team, .. } => Some(*team),
             _ => None,
         }
@@ -209,6 +224,18 @@ pub enum Event {
     },
     SeasonStarted {
         year: i32,
+    },
+    TradeProposed {
+        offer: u32,
+        from: u8,
+        to: u8,
+        give: Vec<PlayerId>,
+        get: Vec<PlayerId>,
+    },
+    /// The club it was put to answered; an accepted offer moves the players.
+    TradeAnswered {
+        offer: u32,
+        accepted: bool,
     },
     TacticsSet {
         team: u8,

@@ -104,6 +104,10 @@ impl<T: Transport> OwnerAgent for ExternalAgent<T> {
 }
 
 impl<T: Transport> GmAgent for ExternalAgent<T> {
+    fn trades(&self) -> bool {
+        true
+    }
+
     fn act(&mut self, turn: &GmTurn) -> Vec<GmAction> {
         match self.ask(&Request::Gm(turn.clone())) {
             Some(Response::Gm { actions }) => actions,

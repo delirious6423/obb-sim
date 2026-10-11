@@ -1,0 +1,20 @@
+[package]
+name = "gm"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+connect.workspace = true
+libm.workspace = true
+world.workspace = true
+
+[dev-dependencies]
+calibration.workspace = true
+protocol.workspace = true
+rayon.workspace = true
+sim-core.workspace = true
+
+[lints]
+workspace = true

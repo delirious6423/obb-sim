@@ -75,11 +75,22 @@ const MARKET_KEY: u64 = 9_999;
 /// Expected wins above replacement over a season at quality `q`.
 #[must_use]
 pub fn war_of(kind: Kind, q: f64) -> f64 {
-    let volume = match kind {
+    (q + REPLACEMENT) * volume(kind) / 10.0
+}
+
+/// Plate appearances (batters) or batters faced (pitchers) in a full season.
+fn volume(kind: Kind) -> f64 {
+    match kind {
         Kind::Batter => 650.0,
         Kind::Pitcher => 450.0,
-    };
-    (q + REPLACEMENT) * volume / 10.0
+    }
+}
+
+/// The quality that earns this many wins above replacement in a season;
+/// the inverse of [`war_of`]. Lets anyone read a price as a quality.
+#[must_use]
+pub fn quality_from_war(kind: Kind, war: f64) -> f64 {
+    war * 10.0 / volume(kind) - REPLACEMENT
 }
 
 /// The market's (club-independent) view of a player's current quality: no

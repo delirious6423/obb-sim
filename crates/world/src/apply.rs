@@ -142,6 +142,12 @@ impl World {
                     return Err(WorldError::UnknownClub(*team));
                 }
             }
+            Event::TradeProposed { from, to, .. } => {
+                if !club_ok(*from) || !club_ok(*to) {
+                    return invalid("trade names an unknown club");
+                }
+            }
+            Event::TradeAnswered { .. } => {}
             Event::BudgetSet { team, payroll } => {
                 if !club_ok(*team) {
                     return Err(WorldError::UnknownClub(*team));
@@ -290,6 +296,64 @@ impl World {
                     return Err(WorldError::Phase(self.phase));
                 }
                 self.club_mut(*team)?.budget = *payroll;
+                Ok(())
+            }
+            Event::TradeProposed {
+                offer,
+                from,
+                to,
+                give,
+                get,
+            } => {
+                if !matches!(
+                    self.phase,
+                    Phase::Progressed | Phase::Drafting | Phase::FreeAgency
+                ) {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                if *offer != self.next_offer {
+                    return invalid("offer ids must count up");
+                }
+                if let Err(m) = self.check_trade(*from, *to, give, get) {
+                    return invalid(m);
+                }
+                self.offers.push(crate::state::TradeOffer {
+                    id: *offer,
+                    from: *from,
+                    to: *to,
+                    give: give.clone(),
+                    get: get.clone(),
+                });
+                self.next_offer += 1;
+                Ok(())
+            }
+            Event::TradeAnswered { offer, accepted } => {
+                if !matches!(
+                    self.phase,
+                    Phase::Progressed | Phase::Drafting | Phase::FreeAgency
+                ) {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                let Some(at) = self.offers.iter().position(|o| o.id == *offer) else {
+                    return invalid("no such offer");
+                };
+                let o = self.offers[at].clone();
+                if *accepted {
+                    if let Err(m) = self.check_trade(o.from, o.to, &o.give, &o.get) {
+                        return invalid(m);
+                    }
+                    for (ids, club) in [(&o.give, o.to), (&o.get, o.from)] {
+                        for id in ids {
+                            let old = self.player_mut(*id)?.team;
+                            if let Some(old) = old {
+                                self.club_mut(old)?.players.remove(id);
+                            }
+                            self.club_mut(club)?.players.insert(*id);
+                            self.player_mut(*id)?.team = Some(club);
+                        }
+                    }
+                }
+                self.offers.remove(at);
                 Ok(())
             }
             Event::TacticsSet { team, tactics } => {
@@ -555,6 +619,7 @@ impl World {
                     }
                 }
                 self.phase = Phase::Regular;
+                self.offers.clear();
                 Ok(())
             }
         }

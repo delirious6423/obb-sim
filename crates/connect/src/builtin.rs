@@ -56,6 +56,7 @@ impl GmAgent for BuiltInGm {
             GmStage::Draft => draft_pick(&turn.obs).into_iter().collect(),
             GmStage::FreeAgency => free_agency_step(&turn.obs).into_iter().collect(),
             GmStage::Roster => set_levels(&turn.obs),
+            GmStage::Trade => Vec::new(),
         };
         commands.iter().filter_map(GmAction::from_command).collect()
     }

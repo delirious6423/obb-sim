@@ -11,7 +11,10 @@ use crate::player::{
 };
 use crate::rating::{Model, normal, uniform};
 use crate::scout::asking_salary;
-use crate::state::{CREDIT, ClubState, Finance, MIN_SALARY, Phase, Rules, TEAMS, World};
+use crate::state::{
+    CREDIT, ClubState, Finance, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB, Phase,
+    ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules, TEAMS, TRADE_MAX_PER_SIDE, World,
+};
 use crate::util::{stream, tag};
 
 const YEAR_ZERO: i32 = 2030;
@@ -62,6 +65,8 @@ impl World {
             finances: Vec::new(),
             next_player: 0,
             last_records: Vec::new(),
+            offers: Vec::new(),
+            next_offer: 0,
             model,
             env: sim_core::Env::new(params).expect("valid parameters"),
             tables: Default::default(),
@@ -114,6 +119,70 @@ impl World {
         } else {
             Err(WorldError::Phase(self.phase))
         }
+    }
+
+    fn check_trade_window(&self) -> Result<(), WorldError> {
+        if matches!(
+            self.phase,
+            Phase::Progressed | Phase::Drafting | Phase::FreeAgency
+        ) {
+            Ok(())
+        } else {
+            Err(WorldError::Phase(self.phase))
+        }
+    }
+
+    /// Whether `from` and `to` can swap these players right now.
+    pub(crate) fn check_trade(
+        &self,
+        from: u8,
+        to: u8,
+        give: &[PlayerId],
+        get: &[PlayerId],
+    ) -> Result<(), String> {
+        if from == to {
+            return Err("a club cannot trade with itself".into());
+        }
+        if give.is_empty() && get.is_empty() {
+            return Err("a trade moves at least one player".into());
+        }
+        if give.len() > TRADE_MAX_PER_SIDE || get.len() > TRADE_MAX_PER_SIDE {
+            return Err("too many players in the trade".into());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (ids, owner) in [(give, from), (get, to)] {
+            for id in ids {
+                if !seen.insert(*id) {
+                    return Err("a player appears twice".into());
+                }
+                if !self.clubs[usize::from(owner)].players.contains(id) {
+                    return Err(format!("player {} is not on club {owner}", id.0));
+                }
+            }
+        }
+        for (club, out, inn) in [(from, give, get), (to, get, give)] {
+            for kind in [crate::rating::Kind::Batter, crate::rating::Kind::Pitcher] {
+                let of =
+                    |ids: &[PlayerId]| ids.iter().filter(|i| self.players[i].kind == kind).count();
+                let after = self.kind_count(club, kind, None) + of(inn) - of(out);
+                if after > ROSTER_MAX_PER_KIND {
+                    return Err(format!("club {club} would hold {after} {kind:?}s"));
+                }
+                if after < MAJORS_PER_KIND && of(inn) < of(out) {
+                    return Err(format!("club {club} would be left with {after} {kind:?}s"));
+                }
+            }
+            let sal = |ids: &[PlayerId]| -> f64 {
+                ids.iter()
+                    .filter_map(|i| self.players[i].contract.map(|c| c.salary))
+                    .sum()
+            };
+            let after = self.payroll(usize::from(club)) + sal(inn) - sal(out);
+            if sal(inn) > sal(out) && after > self.rules.payroll_cap + 1e-9 {
+                return Err(format!("club {club} would be over the payroll cap"));
+            }
+        }
+        Ok(())
     }
 
     fn check_team(&self, team: u8) -> Result<(), WorldError> {
@@ -188,6 +257,51 @@ impl World {
                 Ok(vec![Event::BudgetSet {
                     team: *team,
                     payroll: *payroll,
+                }])
+            }
+            Command::ProposeTrade {
+                team,
+                partner,
+                give,
+                get,
+            } => {
+                self.check_team(*team)?;
+                self.check_team(*partner)?;
+                self.check_trade_window()?;
+                if self.offers.len() >= 4 * TEAMS
+                    || self.offers.iter().filter(|o| o.from == *team).count() >= OFFERS_PER_CLUB
+                {
+                    return Err(WorldError::Invalid("too many open trade offers".into()));
+                }
+                self.check_trade(*team, *partner, give, get)
+                    .map_err(WorldError::Invalid)?;
+                Ok(vec![Event::TradeProposed {
+                    offer: self.next_offer,
+                    from: *team,
+                    to: *partner,
+                    give: give.clone(),
+                    get: get.clone(),
+                }])
+            }
+            Command::RespondTrade {
+                team,
+                offer,
+                accept,
+            } => {
+                self.check_team(*team)?;
+                self.check_trade_window()?;
+                let o = self
+                    .offers
+                    .iter()
+                    .find(|o| o.id == *offer && o.to == *team)
+                    .ok_or_else(|| WorldError::Invalid("no such offer for this club".into()))?;
+                if *accept {
+                    self.check_trade(o.from, o.to, &o.give, &o.get)
+                        .map_err(WorldError::Invalid)?;
+                }
+                Ok(vec![Event::TradeAnswered {
+                    offer: *offer,
+                    accepted: *accept,
                 }])
             }
             Command::SetTactics { team, tactics } => {
@@ -294,7 +408,10 @@ impl World {
                     .player(*player)
                     .ok_or(WorldError::UnknownPlayer(*player))?;
                 let owed = p.contract.map_or(0.0, |c| c.salary * f64::from(c.years));
-                if self.clubs[usize::from(*team)].cash - owed < -CREDIT {
+                // A club over its roster limits must be able to cut down, however
+                // little cash it has; otherwise a bad signer could stall the league.
+                let over_limit = self.kind_count(*team, p.kind, None) > ROSTER_PER_KIND;
+                if !over_limit && self.clubs[usize::from(*team)].cash - owed < -CREDIT {
                     return Err(WorldError::Invalid(
                         "club cannot afford to pay off the contract".into(),
                     ));

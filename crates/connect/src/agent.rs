@@ -17,6 +17,12 @@ pub trait OwnerAgent {
 
 pub trait GmAgent {
     fn act(&mut self, turn: &GmTurn) -> Vec<GmAction>;
+
+    /// Whether to be asked at the trade stage (it costs a look at the whole
+    /// league's market, so agents that never trade say no).
+    fn trades(&self) -> bool {
+        false
+    }
 }
 
 pub trait FieldManagerAgent {

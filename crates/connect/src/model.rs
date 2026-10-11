@@ -69,6 +69,9 @@ pub enum GmStage {
     FreeAgency,
     /// Free agency is over: set levels and release, in any number of actions.
     Roster,
+    /// Trading is open: propose trades and answer the offers put to you.
+    /// `obs.trade` is filled in.
+    Trade,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,7 +80,7 @@ pub struct GmTurn {
     pub obs: GmObs,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum GmAction {
     Draft {
@@ -95,6 +98,15 @@ pub enum GmAction {
     SetLevel {
         player: PlayerId,
         level: Level,
+    },
+    ProposeTrade {
+        partner: u8,
+        give: Vec<PlayerId>,
+        get: Vec<PlayerId>,
+    },
+    RespondTrade {
+        offer: u32,
+        accept: bool,
     },
 }
 
@@ -120,13 +132,24 @@ impl GmAction {
                 player,
                 level,
             },
+            Self::ProposeTrade { partner, give, get } => Command::ProposeTrade {
+                team,
+                partner,
+                give,
+                get,
+            },
+            Self::RespondTrade { offer, accept } => Command::RespondTrade {
+                team,
+                offer,
+                accept,
+            },
         }
     }
 
     /// The action behind a general-manager command, if it is one.
     #[must_use]
     pub fn from_command(c: &Command) -> Option<Self> {
-        Some(match *c {
+        Some(match c.clone() {
             Command::DraftPlayer { player, .. } => Self::Draft { player },
             Command::PassPick { .. } => Self::Pass,
             Command::SignFreeAgent {

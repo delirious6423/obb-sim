@@ -5,7 +5,11 @@
 use protocol::{Actor, TeamId};
 use world::agents::{GmView, OwnerObs};
 use world::command::{Command, Event, WorldError};
-use world::state::{Phase, TEAMS, Tactics, World};
+use world::rating::Kind;
+use world::state::{MAJORS_PER_KIND, Phase, TEAMS, Tactics, World};
+
+/// Most players the league office signs for one short club.
+const MAX_OFFICE_SIGNINGS: usize = 10;
 
 use crate::agent::{CommissionerAgent, FieldManagerAgent, GmAgent, OwnerAgent};
 use crate::builtin::{BuiltInCommissioner, BuiltInGm, BuiltInManager, BuiltInOwner};
@@ -158,6 +162,7 @@ pub fn run_year_with(
         draft_turn(w, seats, log, team)?;
     }
     commissioner_step(w, seats, log)?; // close the draft
+    trade_rounds(w, seats, log);
     free_agency(w, seats, log);
     for t in 0..TEAMS as u8 {
         let turn = GmTurn {
@@ -190,6 +195,26 @@ fn start_season(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) -> Resul
         }
         Err(e @ WorldError::Invalid(_)) if w.phase == Phase::FreeAgency => {
             for t in 0..TEAMS as u8 {
+                // A club short of players signs the best ones it can afford
+                // (minimum-salary deals need no budget room).
+                for _ in 0..MAX_OFFICE_SIGNINGS {
+                    let turn = GmTurn {
+                        stage: GmStage::FreeAgency,
+                        obs: GmView::new(w, t).observe(),
+                    };
+                    let short = [Kind::Batter, Kind::Pitcher].iter().any(|k| {
+                        turn.obs.roster.iter().filter(|s| s.kind == *k).count() < MAJORS_PER_KIND
+                    });
+                    let Some(a) = short
+                        .then(|| BuiltInGm.act(&turn))
+                        .and_then(|v| v.into_iter().next())
+                    else {
+                        break;
+                    };
+                    if exec(w, log, team_actor(Actor::gm, t), a.command(t)).is_err() {
+                        break;
+                    }
+                }
                 let turn = GmTurn {
                     stage: GmStage::Roster,
                     obs: GmView::new(w, t).observe(),
@@ -273,3 +298,36 @@ fn free_agency(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
         }
     }
 }
+
+/// Trading: clubs propose, then answer what was put to them. A few rounds
+/// let counter-offers happen; rounds stop when nobody does anything.
+fn trade_rounds(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
+    if !seats.gms.iter().any(|g| g.trades()) {
+        return;
+    }
+    let first = (w.year as usize) % TEAMS;
+    for _ in 0..TRADE_ROUNDS {
+        let mut acted = false;
+        for k in 0..TEAMS {
+            let team = ((first + k) % TEAMS) as u8;
+            if !seats.gms[usize::from(team)].trades() {
+                continue;
+            }
+            let turn = GmTurn {
+                stage: GmStage::Trade,
+                obs: GmView::new(w, team).observe_trades(),
+            };
+            for a in seats.gms[usize::from(team)].act(&turn) {
+                match exec(w, log, team_actor(Actor::gm, team), a.command(team)) {
+                    Ok(()) => acted = true,
+                    Err(e) => refuse(seats, w, team, "general manager", &e),
+                }
+            }
+        }
+        if !acted {
+            break;
+        }
+    }
+}
+
+const TRADE_ROUNDS: usize = 3;

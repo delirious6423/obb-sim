@@ -97,6 +97,23 @@ pub struct ClubState {
     pub tactics: Tactics,
 }
 
+/// A trade one club has put to another and the other has not yet answered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TradeOffer {
+    pub id: u32,
+    pub from: u8,
+    pub to: u8,
+    /// Players `from` gives up (and `to` receives).
+    pub give: Vec<PlayerId>,
+    /// Players `from` asks for.
+    pub get: Vec<PlayerId>,
+}
+
+/// Most players on one side of a trade.
+pub const TRADE_MAX_PER_SIDE: usize = 6;
+/// Open offers one club may have out at a time.
+pub const OFFERS_PER_CLUB: usize = 4;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
     pub year: i32,
@@ -158,6 +175,9 @@ pub struct World {
     pub next_player: u32,
     /// Records of the regular season just played, until finances settle.
     pub last_records: Vec<Record>,
+    /// Trade offers waiting for an answer; they lapse when the season starts.
+    pub offers: Vec<TradeOffer>,
+    pub next_offer: u32,
     pub model: Model,
     pub env: Env,
     /// Run-expectancy and win-probability tables, built from the simulation
@@ -187,6 +207,8 @@ impl PartialEq for World {
             && self.finances == other.finances
             && self.next_player == other.next_player
             && self.last_records == other.last_records
+            && self.offers == other.offers
+            && self.next_offer == other.next_offer
     }
 }
 
