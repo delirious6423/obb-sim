@@ -46,7 +46,7 @@ Engine (`sim-core`; pure; no I/O; data passed in)
 Calibration (kept out of git)
 - [ ] `data/internal/` in `.gitignore`; download Retrosheet 2015-2019 event files (approved) into it
 - [ ] `tools/`: parse events; write league rates + talent spread to `data/internal/params.json`. No player id or name written anywhere.
-- [ ] Calibration crate: fictional rosters (generated names, talent drawn from the spread), 100k games, table of simulated vs target
+- [x] Calibration crate: fictional rosters (generated names, talent drawn from the spread), 100k games, table of simulated vs target
 - [ ] `THIRD_PARTY.md`: Retrosheet notice (no Lahman entry; not used)
 - [ ] Gate run + reviewer subagent + log entry
 
