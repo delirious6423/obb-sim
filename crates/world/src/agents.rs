@@ -17,6 +17,9 @@ const SIGNABLE: f64 = 1.5;
 /// thirteenth man of the same kind before the GM bothers.
 const UPGRADE_MARGIN: f64 = 0.0015;
 
+/// Longest contract a club may sign.
+pub const MAX_YEARS: u8 = 7;
+
 /// A player as one club sees him.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Seen {
@@ -56,6 +59,18 @@ impl Seen {
     #[must_use]
     pub fn draft_score(&self) -> f64 {
         0.5 * self.now + 0.5 * self.peak
+    }
+
+    /// Years worth signing him for. The market asks the same salary whatever
+    /// the length, so a player still improving is worth locking in for as long
+    /// as possible, and an older one only for what the market asks.
+    #[must_use]
+    pub fn sign_years(&self) -> u8 {
+        match self.age {
+            ..=25 => MAX_YEARS,
+            26..=27 => 5.max(self.ask_years),
+            _ => self.ask_years,
+        }
     }
 
     /// Value to the club per year minus the price, in millions.
@@ -320,7 +335,7 @@ pub fn free_agency_step(v: &GmObs) -> Option<Command> {
         team: v.team,
         player: f.id,
         salary: f.ask,
-        years: f.ask_years,
+        years: f.sign_years(),
     })
 }
 

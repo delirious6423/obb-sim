@@ -79,7 +79,7 @@ Gate: 50-season runs show no talent inflation or collapse and no insolvent teams
 - [x] Minor leagues with level equivalencies
 - [x] Draft: noisy team-specific boards, signability
 - [x] Minimal economy: revenue, payroll cap, budget; fixed-behavior owner and commissioner agents
-- [ ] Gate run + reviewer + log entry. **BLOCKED: gate fails on one metric after 2 fix attempts (see Log); needs a decision.**
+- [x] Stability gate passes on all 5 seeds (era shift, see Log). **FAILING GATE: `draft_gate` (career WAR about 2x the sourced ranges, bust rate low, picks 91-300 reach too low; see Log, 2026-10-11 close-out).**
 
 ## Phase 4a: manager AI
 
@@ -97,8 +97,8 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - [x] Surplus-value GM model; trade, free-agency and draft AI with personalities
 - [x] Difficulty profiles and presets: Rookie, Veteran, All-Star, Hall of Fame (information and decision quality only, never the dice)
 - [x] Evaluation ladder with listed exploit bots
-- [ ] Gate run + reviewer + log entry (gate run done: exploit-bot check FAILS for hoarder and stretcher after two fix attempts; see log)
-- [ ] Final summary to the user
+- [x] Gate run + reviewer + log entry (exploit-bot check passes after the close-out fixes; see Log)
+- [ ] Final summary to the user (superseded: the user handed over a full roadmap; Phase 5 next)
 
 ## Draft bands (Phase 3)
 
@@ -115,6 +115,8 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 
 ## Known gaps
 
+- (2026-10-11) `trading_happens` only prints counts and asserts nothing; with the stronger reference it printed 3 proposed, 0 accepted in one 5-year run. Trade volume needs a real behaviour check (Phase 4b item, "behavior checks against real baseball").
+- (2026-10-11) Runs/team-game in the world runs at about 5.0 vs the DH-equivalent target 4.70 (+7%, inside the +-10% world band).
 - Calibration gate is close to tautological for K/BB/HR (rosters are centred on the target); runs/team-game is now gated and does depend on baserunning/fielding.
 - Runs target is DH-equivalent: real 4.48 + pitcher-PA replacement (textbook linear weights, +0.22) = 4.70. Sim is 4.70 under 2015-2019 rules (`extra_inning_runner: false`); the extra-inning runner adds ~0.04. The earlier 4.74 was these two effects, not an engine bug.
 - Extra-inning games: sim 9.7% vs real 8.3% (not gated). Likely game-to-game run variance is too low (no park/weather/starter spread); revisit with Phase 2/3.
@@ -147,6 +149,14 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 
 ## Log
 
+- **Step 1 close-out (2026-10-11)**:
+  - *Exploit bots (1a)*: two root causes found by measurement and fixed in the built-in/reference GM, no thresholds changed. (1) The reference left depth unfilled; injuries pull replacements from Triple-A, so the hoarder (best-now at any price, up to 60 per kind) won on depth. `ReferenceGm` now also upgrades the 24th man of each kind with leftover budget. (2) The market asks the same salary whatever the length, so a long deal for a player still improving is surplus; the stretcher won by forcing 7 years. `Seen::sign_years` (7 years up to age 25, at least 5 at 26-27, else the market's ask) is used by the built-in GM step. The exploit test now uses 5 seeds and season-clustered standard errors (one mean per league run, because seasons within a run are autocorrelated). Final (seasons 26-50, 5 seeds): hoarder -0.027 (z -3.2), tanker -0.155, stretcher -0.008 (z -2.2), trade spammer -0.020. Presets: Rookie -0.096, Veteran -0.048, All-Star +0.017, Hall of Fame +0.036 (HoF vs reference z 10.9; HoF minus Rookie z 24.8). Manager gate still passes (edge +0.0058, z 3.65).
+  - *Stability / BB% drift (1c)*: cause: nothing pulled the talent mix back, so K/BB/HR random-walked (+-8% a decade, both directions, no trend) and BB% sat +10% over the real league. Fix: `World.era`, a per-kind talent shift moved by `PlayersProgressed{era}` each offseason by half the major leaguers' mean talent offset, added to every player's talent (the whole league re-centres; no club gets anything). `scout::peak_quality` includes it. `stability_gate` now passes on all 5 seeds (BB% mean 8.6-8.7% vs real 8.46%; every decade ratio inside the bands). Caveat from a second opinion: zero mean z does not guarantee stable event rates in general (nonlinear mapping, playing time); it works here on 5 seeds. Alternative if it ever fails: calibrate offsets against playing-time-weighted expected rates.
+  - *Draft bands (1b)*: sourced bands already in "Draft bands". Reach rates now inside the sourced ranges for picks 1-10, 11-30, 31-90 on all seeds. FAILING GATE (kept, numbers): picks 1-10 mean career WAR 23-26.5 vs 9.5-12.8; 11-30 11.8-13.1 vs 4.5-8.7; 31-90 4.2-4.5 vs 0.8-3.3; bust 0.46-0.47 / 0.64-0.68 vs 0.60-0.65 / 0.71-0.85; picks 91-300 reach 0.126-0.132 vs 0.17-0.35. Diagnosis: picks 1-10 reached players play about 10.0 seasons at 2.7-2.9 WAR a season (sim); the published studies give about 14.7 WAR among reached for picks 1-5 (12.8/0.87), so careers are probably too long and/or too productive; the sim's mean WAR for an average club (about 30) is fine, so the WAR scale is not the cause. The one bounded model change was already spent in the Phase 3 follow-up. Not changed further.
+  - *Leaks (1d)*: asking prices and bonus demands come from the market view (`scout::public_quality`, `amateur_demand`). New tests (`crates/world/tests/information.rs`): an asking price equals the market view exactly, and neither prices nor demands correlate with true quality better than one club's scouting report does (price 0.70 vs scout 0.91; demand 0.42 vs 0.59).
+  - *Gaps (1e)*: roster limits, cash floor (`CREDIT`), event validation in `apply`, and tests for retirement, expiry, release dead money and levels were already in (Phase 3 follow-up). Phase 1 follow-ups confirmed done (runs/team-game gated at +-3%, walk-off, ghost-runner guard test).
+  - Verifier review: no determinism or double-count bugs. Fixed: `peak_quality` ignored the era; `era` assigned before the year check in `apply`; contract limit used a literal 7 (now `MAX_YEARS`).
+- **State verification (2026-10-11, new session)**: HEAD 7ebd0d3 (Phase 4b), `main` in sync with origin. Repo has 12 crates (ai, calibration, cli, connect, gm, league, protocol, season, sim-core, storage, tactics, world). Phases 0-2 done and gated. Phase 3 built, gate NOT met (`draft_gate` fails on all five seeds, `stability_gate` decade-ratio fails on some seeds). Phase 4a done, gate met. Phase 4b built, exploit-bot gate FAILS (hoarder, stretcher); final summary to user still unticked. `storage` is not started. Checks: `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 99 passed, 0 failed, 12 ignored (ignored = the slow gates). CI on 7ebd0d3, per job: ubuntu-24.04 success, windows-latest success, macos-latest success (previous five runs also green). DISCREPANCIES vs hand-off: (1) the hand-off text is cut off in section 3 (mid-sentence at "PERFORMANCE: always simulate at plate-appearance"), so sections 4-9, including "section 7" and the stop conditions, were not received; (2) the hand-off lists `ai` view, `league`, etc. as before, but PLAN.md says to stop after phase 4b, and 4b's gate is open, so there is no ticked "next item" beyond decisions the user must make; (3) the working tree has uncommitted `CLAUDE.md` changes and untracked `AGENTS.md` and `docs/` (not mine; left unstaged); (4) the hand-off says the UI crate and server come in phases 5 and 8: neither exists yet, as expected.
 - **Phase 0**: workspace, deterministic sim-core, command/event league, role checks. CI green on ubuntu, macOS, Windows; golden values identical on all three.
 - **Phase 1**: log5 engine, baserunning, fielding, relief, box score/play-by-play; Retrosheet 2015-2019 aggregate tool; calibration crate. Gate PASS on 100k games: K +0.58%, BB -0.44%, HR/PA -0.42% (all within ±3%). Fixed a parser bug (force outs counted batter out) found by sanity check; reviewer found no blockers; fixed bases-loaded double play advancement. CI green on 3 OSes.
 - **Phase 2.0 (pre-work)**: runs/team-game explained (pitcher batting vs universal DH +0.22, extra-inning runner +0.04; not an engine bug) and gated at ±3% against a DH-equivalent target (sim 4.697 vs 4.699). `GameParams.extra_inning_runner` rule flag added (calibration uses 2015-2019 rules). Walk-off no longer credits runs past the winning run (home runs excepted). Ghost-runner guard test added.

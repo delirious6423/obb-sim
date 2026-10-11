@@ -59,8 +59,22 @@ fn view(w: &World, key: u64, p: &Player) -> Opinion {
     let y = w.year as u64;
     Opinion {
         now: p.quality + sd_now * sdq * noise(w.seed, key, id, y * 2),
-        peak: p.peak_quality + sd_peak * sdq * noise(w.seed, key, id, y * 2 + 1),
+        peak: peak_quality(w, p) + sd_peak * sdq * noise(w.seed, key, id, y * 2 + 1),
     }
+}
+
+/// True quality at the player's peak, in today's era (the era shift moves
+/// every player's talent, so the stored `peak_quality` alone is out of date).
+#[must_use]
+pub fn peak_quality(w: &World, p: &Player) -> f64 {
+    let mut z = p.peak;
+    for (zi, e) in z
+        .iter_mut()
+        .zip(&w.era[usize::from(p.kind == Kind::Pitcher)])
+    {
+        *zi += e;
+    }
+    w.model.quality(p.kind, &z)
 }
 
 /// A club's opinion of any player. `club` identifies whose eyes these are.

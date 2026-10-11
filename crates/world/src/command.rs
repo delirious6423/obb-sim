@@ -188,6 +188,8 @@ pub enum Event {
     PlayersProgressed {
         year: i32,
         updates: Vec<Update>,
+        /// The era shift after this progression.
+        era: [crate::rating::Z; 2],
     },
     DraftOpened {
         year: i32,

@@ -139,12 +139,12 @@ pub fn deficit(age_eff: f64, decline: f64) -> f64 {
 
 /// Talent and quality at `age` for a player with these hidden traits.
 #[must_use]
-pub fn talent_at(model: &Model, p: &Player, age: i32) -> (Z, f64) {
+pub fn talent_at(model: &Model, p: &Player, age: i32, era: &Z) -> (Z, f64) {
     let total = deficit(f64::from(age) - p.shift, p.decline) + p.drift;
     let delta = model.decline(p.kind, total * model.quality_sd(p.kind));
     let mut z = p.peak;
-    for (zi, d) in z.iter_mut().zip(delta) {
-        *zi += d;
+    for ((zi, d), e) in z.iter_mut().zip(delta).zip(era) {
+        *zi += d + e;
     }
     let q = model.quality(p.kind, &z);
     (z, q)
@@ -207,6 +207,7 @@ pub fn prospect<R: RngCore>(
     year: i32,
     origin: Origin,
     pool: Pool,
+    era: &[Z; 2],
 ) -> Player {
     let kind = if uniform(rng) < 0.52 {
         Kind::Batter
@@ -249,7 +250,12 @@ pub fn prospect<R: RngCore>(
         debut: None,
         career: Career::default(),
     };
-    let (z, q) = talent_at(model, &p, year - born);
+    let (z, q) = talent_at(
+        model,
+        &p,
+        year - born,
+        &era[usize::from(kind == Kind::Pitcher)],
+    );
     p.z = z;
     p.quality = q;
     p

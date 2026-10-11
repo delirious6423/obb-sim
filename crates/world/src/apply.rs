@@ -159,7 +159,10 @@ impl World {
                     return invalid("budget outside the payroll limits");
                 }
             }
-            Event::PlayersProgressed { updates, .. } => {
+            Event::PlayersProgressed { updates, era, .. } => {
+                if era.iter().flatten().any(|x| !x.is_finite()) {
+                    return invalid("era shift must be finite");
+                }
                 let mut seen = std::collections::BTreeSet::new();
                 for u in updates {
                     let p = self
@@ -363,11 +366,12 @@ impl World {
                 self.club_mut(*team)?.tactics = *tactics;
                 Ok(())
             }
-            Event::PlayersProgressed { year, updates } => {
+            Event::PlayersProgressed { year, updates, era } => {
                 expect_phase(self, Phase::Offseason)?;
                 if *year != self.year + 1 {
                     return invalid("progression must advance exactly one year");
                 }
+                self.era = *era;
                 self.year = *year;
                 for u in updates {
                     let id = u.player;

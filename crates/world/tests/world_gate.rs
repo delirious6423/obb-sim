@@ -315,6 +315,14 @@ fn draft_gate() {
                 .filter(|p| !p.reached || p.war / f64::from(p.seasons) < 1.5)
                 .count() as f64
                 / signed.len() as f64;
+            let reached: Vec<_> = signed.iter().filter(|p| p.reached).collect();
+            println!(
+                "{label:<9} {} (info) seasons per reached player {:.2}, WAR per season {:.2}",
+                b.name,
+                reached.iter().map(|p| f64::from(p.seasons)).sum::<f64>() / reached.len() as f64,
+                reached.iter().map(|p| p.war).sum::<f64>()
+                    / reached.iter().map(|p| f64::from(p.seasons)).sum::<f64>(),
+            );
             c.check(
                 label,
                 &format!("{} reach the majors", b.name),

@@ -12,9 +12,10 @@
 //!   z >= 2.
 //! * `presets_rank_in_order`: scores rise Rookie < Veteran < All-Star <
 //!   Hall of Fame, and Hall of Fame beats Rookie with z >= 2.
-//! * `exploit_bots_gain_no_lasting_edge`: over 50 seasons, in seasons 26-50
-//!   no listed exploit bot beats the reference with z >= 2 or by more than
-//!   0.015 win percentage.
+//! * `exploit_bots_gain_no_lasting_edge`: over 50 seasons on five seeds, in
+//!   seasons 26-50 no listed exploit bot beats the reference with z >= 2 or by
+//!   more than 0.015 win percentage. The standard error is clustered by league
+//!   run (one mean per seed), because seasons within a run are autocorrelated.
 //!
 //! Thresholds are fixed here before any run and are not edited to pass.
 
@@ -36,7 +37,7 @@ use world::state::World;
 const SEEDS: [u64; 5] = [20_250_101, 1, 2, 3, 4];
 const BURN_IN: u8 = 10;
 const PRESET_YEARS: usize = 20;
-const BOT_SEEDS: usize = 3;
+const BOT_SEEDS: usize = 5;
 const BOT_YEARS: usize = 50;
 const Z_REQUIRED: f64 = 2.0;
 const BOT_MAX_EDGE: f64 = 0.015;
@@ -103,6 +104,17 @@ fn mean_se(v: &[f64]) -> (f64, f64) {
     (m, (var / n).sqrt())
 }
 
+/// Mean over all seasons and its standard error clustered by league run:
+/// seasons within one run are autocorrelated, so the run means are the
+/// independent observations.
+fn clustered_mean_se(runs: &[Vec<f64>]) -> (f64, f64) {
+    let means: Vec<f64> = runs
+        .iter()
+        .map(|r| r.iter().sum::<f64>() / r.len() as f64)
+        .collect();
+    mean_se(&means)
+}
+
 fn preset_scores(cal: &Calibration, preset: Preset, personality: Personality) -> Vec<f64> {
     SEEDS
         .par_iter()
@@ -167,15 +179,14 @@ fn exploit_bots_gain_no_lasting_edge() {
     ];
     let mut failures = Vec::new();
     for (name, make) in bots {
-        let late: Vec<f64> = SEEDS[..BOT_SEEDS]
+        let late: Vec<Vec<f64>> = SEEDS[..BOT_SEEDS]
             .par_iter()
             .map(|&seed| {
                 let g = gaps(&cal, seed, BOT_YEARS, &|_| make());
                 g[BOT_YEARS / 2..].to_vec()
             })
-            .flatten()
             .collect();
-        let (m, se) = mean_se(&late);
+        let (m, se) = clustered_mean_se(&late);
         println!(
             "{name}: seasons 26-50 {m:+.4} (se {se:.4}, z {:.2})",
             m / se

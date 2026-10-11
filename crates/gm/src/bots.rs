@@ -195,8 +195,22 @@ impl GmAgent for ReferenceGm {
 }
 
 /// With the usual signing step finished, buy the best upgrade the budget
-/// still allows, whatever the price: a budget is there to be spent.
+/// still allows, whatever the price: a budget is there to be spent. First
+/// upgrades to the thirteen who play, then to the depth behind them (the
+/// Triple-A level), who play when injuries strike.
 fn spend_leftover(t: &GmTurn) -> Vec<GmAction> {
+    let depth = MAJORS_PER_KIND + Level::Triple.capacity();
+    for spots in [MAJORS_PER_KIND, depth] {
+        if let Some(a) = best_upgrade(t, spots) {
+            return vec![a];
+        }
+    }
+    Vec::new()
+}
+
+/// The best free agent who beats the club's `spots`-th best player of his
+/// kind, if the budget has room.
+fn best_upgrade(t: &GmTurn, spots: usize) -> Option<GmAction> {
     let mut best: Option<&Seen> = None;
     for kind in [Kind::Batter, Kind::Pitcher] {
         let mut mine: Vec<f64> = t
@@ -210,7 +224,7 @@ fn spend_leftover(t: &GmTurn) -> Vec<GmAction> {
         if mine.len() < MAJORS_PER_KIND || mine.len() >= ROSTER_MAX_PER_KIND {
             continue;
         }
-        let bar = mine[MAJORS_PER_KIND - 1] + 0.0015;
+        let bar = mine.get(spots - 1).copied().unwrap_or(f64::NEG_INFINITY) + 0.0015;
         for f in t.obs.free_agents.iter().filter(|f| f.kind == kind) {
             if f.score() > bar
                 && room(t, f.ask)
@@ -223,10 +237,8 @@ fn spend_leftover(t: &GmTurn) -> Vec<GmAction> {
     best.map(|f| GmAction::Sign {
         player: f.id,
         salary: f.ask,
-        years: 1,
+        years: if f.age <= 25 { f.sign_years() } else { 1 },
     })
-    .into_iter()
-    .collect()
 }
 
 /// Quality (runs per PA, summed) a trade must add before the reference agrees.

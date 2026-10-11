@@ -9,7 +9,7 @@ use sim_core::Env;
 use tactics::{DecisionLog, Tables};
 
 use crate::player::{Player, PlayerId, Pool};
-use crate::rating::Model;
+use crate::rating::{Model, Z};
 
 pub const TEAMS: usize = 30;
 /// Batters and pitchers each club carries at the major-league level.
@@ -178,6 +178,10 @@ pub struct World {
     /// Trade offers waiting for an answer; they lapse when the season starts.
     pub offers: Vec<TradeOffer>,
     pub next_offer: u32,
+    /// Era shift of talent, per kind (batters, pitchers): added to every
+    /// player's talent so the average major leaguer stays at the league
+    /// average (see `World::progress`). Moved only by progression events.
+    pub era: [Z; 2],
     pub model: Model,
     pub env: Env,
     /// Run-expectancy and win-probability tables, built from the simulation
@@ -209,6 +213,7 @@ impl PartialEq for World {
             && self.last_records == other.last_records
             && self.offers == other.offers
             && self.next_offer == other.next_offer
+            && self.era == other.era
     }
 }
 

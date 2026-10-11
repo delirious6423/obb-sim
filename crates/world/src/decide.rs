@@ -7,9 +7,9 @@ use crate::command::{
     ClubFinanceState, Command, Event, Founding, Outcome, Update, WorldError, authorize,
 };
 use crate::player::{
-    Contract, DEFAULT_POOL, Origin, Player, PlayerId, Pool, prospect, slot_bonus, talent_at,
+    Contract, DEFAULT_POOL, Level, Origin, Player, PlayerId, Pool, prospect, slot_bonus, talent_at,
 };
-use crate::rating::{Model, normal, uniform};
+use crate::rating::{Kind, Model, normal, uniform};
 use crate::scout::asking_salary;
 use crate::state::{
     CREDIT, ClubState, Finance, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB, Phase,
@@ -18,6 +18,8 @@ use crate::state::{
 use crate::util::{stream, tag};
 
 const YEAR_ZERO: i32 = 2030;
+/// Share of the major leaguers' average talent offset the era shift removes each year.
+const ERA_PULL: f64 = 0.5;
 const AMATEURS: usize = 600;
 const INTERNATIONALS: usize = 200;
 /// International signings use a flat slot (millions).
@@ -67,6 +69,7 @@ impl World {
             last_records: Vec::new(),
             offers: Vec::new(),
             next_offer: 0,
+            era: [[0.0; crate::rating::K]; 2],
             model,
             env: sim_core::Env::new(params).expect("valid parameters"),
             tables: Default::default(),
@@ -375,7 +378,7 @@ impl World {
                 let p = self
                     .player(*player)
                     .ok_or(WorldError::UnknownPlayer(*player))?;
-                if !(1..=7).contains(years) {
+                if !(1..=crate::agents::MAX_YEARS).contains(years) {
                     return Err(WorldError::Invalid("contracts run 1 to 7 years".into()));
                 }
                 if !salary.is_finite() || *salary < asking_salary(self, p).max(MIN_SALARY) - 1e-9 {
@@ -499,7 +502,7 @@ impl World {
         let year = self.year + 1;
         let mut rng = stream(self.seed, tag::PROGRESS, year as u64, 0);
         let sdq = |p: &Player| self.model.quality_sd(p.kind);
-        let mut updates = Vec::with_capacity(self.players.len());
+        let mut updates: Vec<Update> = Vec::with_capacity(self.players.len());
         for p in self.players.values() {
             // Young players' development is much less predictable.
             let age_now = p.age(year);
@@ -510,7 +513,12 @@ impl World {
             let mut aged = p.clone();
             aged.drift = drift;
             let age = p.age(year);
-            let (z, q) = talent_at(&self.model, &aged, age);
+            let (z, q) = talent_at(
+                &self.model,
+                &aged,
+                age,
+                &self.era[usize::from(p.kind == Kind::Pitcher)],
+            );
             let mut contract = p.contract;
             let mut outcome = Outcome::Stays;
             if let Some(c) = &mut contract {
@@ -541,7 +549,43 @@ impl World {
                 outcome,
             });
         }
-        Event::PlayersProgressed { year, updates }
+        // The era moves so that the average major leaguer stays at the league
+        // average: without it the talent mix wanders (nothing in the game
+        // pulls the run environment back), and the league drifts away from
+        // the real one. This is the whole league adjusting, not a bonus to
+        // any club.
+        let mut era = self.era;
+        for kind in [Kind::Batter, Kind::Pitcher] {
+            let k = usize::from(kind == Kind::Pitcher);
+            let mut sum = [0.0; crate::rating::K];
+            let mut n = 0.0;
+            for u in &updates {
+                let p = &self.players[&u.player];
+                if p.kind == kind && p.level == Level::Majors {
+                    for (s, z) in sum.iter_mut().zip(&u.z) {
+                        *s += z;
+                    }
+                    n += 1.0;
+                }
+            }
+            if n == 0.0 {
+                continue;
+            }
+            let shift: crate::rating::Z = sum.map(|s| -ERA_PULL * s / n);
+            for (e, d) in era[k].iter_mut().zip(shift) {
+                *e += d;
+            }
+            for u in updates
+                .iter_mut()
+                .filter(|u| self.players[&u.player].kind == kind)
+            {
+                for (z, d) in u.z.iter_mut().zip(shift) {
+                    *z += d;
+                }
+                u.quality = self.model.quality(kind, &u.z);
+            }
+        }
+        Event::PlayersProgressed { year, updates, era }
     }
 
     // ---- the draft -----------------------------------------------------
@@ -566,6 +610,7 @@ impl World {
                 year,
                 origin,
                 self.pool,
+                &self.era,
             ));
             next += 1;
         }

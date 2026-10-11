@@ -133,13 +133,19 @@ fn seed_population(w: &mut World) {
                 year - age + origin.entry_age(),
                 origin,
                 w.pool,
+                &w.era,
             );
             if p.kind != kind {
                 continue;
             }
             w.next_player += 1;
             p.drift = 0.3 * normal(&mut rng);
-            let (z, q) = talent_at(&w.model, &p, age);
+            let (z, q) = talent_at(
+                &w.model,
+                &p,
+                age,
+                &w.era[usize::from(p.kind == Kind::Pitcher)],
+            );
             p.z = z;
             p.quality = q;
             people.push(p);
