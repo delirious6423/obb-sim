@@ -137,6 +137,11 @@ impl World {
                     return invalid("finances must be finite numbers");
                 }
             }
+            Event::TacticsSet { team, .. } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+            }
             Event::BudgetSet { team, payroll } => {
                 if !club_ok(*team) {
                     return Err(WorldError::UnknownClub(*team));
@@ -285,6 +290,13 @@ impl World {
                     return Err(WorldError::Phase(self.phase));
                 }
                 self.club_mut(*team)?.budget = *payroll;
+                Ok(())
+            }
+            Event::TacticsSet { team, tactics } => {
+                if self.phase == Phase::Unfounded {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                self.club_mut(*team)?.tactics = *tactics;
                 Ok(())
             }
             Event::PlayersProgressed { year, updates } => {

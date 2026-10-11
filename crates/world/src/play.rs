@@ -1,21 +1,51 @@
 //! Playing the games: lineups from rosters, injuries between segments.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use season::{BatTotals, Club, PitchTotals, Record, Schedule, TEAMS, replay_game_with};
-use sim_core::{GameOutcome, LINEUP, Player as SimPlayer, Team};
+use sim_core::{GameOutcome, LINEUP, ManagerMaker, Player as SimPlayer, Team};
+use tactics::{TableManagerMaker, Tables};
 
 use crate::command::{Event, Injury, Line, SeasonLine};
 use crate::player::{Level, Player, PlayerId};
 use crate::rating::{Kind, normal, uniform};
 use crate::scout::{REPLACEMENT, opinion};
-use crate::state::{LeagueLine, World};
+use crate::state::{LeagueLine, Tactics, World};
 use crate::util::{stream, tag};
 
 const SEGMENTS: usize = 6;
 const ROTATION: usize = 5;
 const BULLPEN: usize = 6;
+
+/// Tables for the table manager, built from average teams the first time
+/// they are needed. The result depends only on the game parameters.
+/// Building runs a parallel loop, so callers must not hold this from inside
+/// another rayon task (`build_active` is only called from sequential code).
+fn tables(w: &World) -> &Arc<Tables> {
+    w.tables.get_or_init(|| {
+        let rates = w.env.params.league;
+        let player = |name: &str, n: usize| SimPlayer {
+            name: format!("{name} {n}"),
+            rates,
+        };
+        let teams: Vec<Team> = (0..4)
+            .map(|i| {
+                let name = format!("Table {i}");
+                Team::new(
+                    &name,
+                    (0..LINEUP).map(|n| player(&name, n)).collect(),
+                    (0..ROTATION.min(1) + BULLPEN)
+                        .map(|n| player(&name, n))
+                        .collect(),
+                )
+                .expect("valid team")
+            })
+            .collect();
+        Arc::new(Tables::build(&w.env, &teams, 20_000, 0x7ab1e5))
+    })
+}
 
 pub(crate) struct Active {
     pub club: Club,
@@ -70,6 +100,14 @@ pub(crate) fn build_active(w: &World, team: usize, out: &BTreeMap<PlayerId, u16>
     let (rot, pen) = pit.split_at(ROTATION.min(pit.len()));
     let mut pen: Vec<(PlayerId, f64)> = pen.to_vec();
     pen.reverse(); // best last: the closer
+    let manager: Option<Arc<dyn ManagerMaker>> = match state.tactics {
+        Tactics::Baseline => None,
+        Tactics::Tables => Some(Arc::new(TableManagerMaker::new(
+            Arc::clone(tables(w)),
+            pen.iter().map(|b| b.1).collect(),
+            Arc::clone(&w.logs[team]),
+        ))),
+    };
     let sim = |id: PlayerId| -> SimPlayer {
         let p = &w.players[&id];
         SimPlayer {
@@ -93,6 +131,7 @@ pub(crate) fn build_active(w: &World, team: usize, out: &BTreeMap<PlayerId, u16>
         club: Club {
             name: state.name.clone(),
             rotation,
+            manager,
         },
         bats: bats.iter().map(|b| b.0).collect(),
         staff,

@@ -399,7 +399,7 @@ fn drafting_signs_a_player_and_an_unaffordable_demand_walks_away() {
     w.execute(&c, Command::OpenDraft).unwrap();
     // The agent's pick signs a drafted amateur to a club contract.
     let team = w.draft.as_ref().unwrap().order[0];
-    let cmd = world::agents::draft_pick(&world::agents::GmView::new(&w, team)).unwrap();
+    let cmd = world::agents::draft_pick(&world::agents::GmView::new(&w, team).observe()).unwrap();
     let Command::DraftPlayer { player, .. } = cmd else {
         panic!("expected a pick")
     };

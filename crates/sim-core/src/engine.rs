@@ -5,11 +5,12 @@
 //! fixed-size values on the stack.
 
 use crate::events::{Ball, GameEvent, Half, PlayRecord, Sink};
+use crate::manager::{Baseline, GameView, Manager, ReliefCall, StealCall};
 use crate::params::Env;
 use crate::rates::{Outcome, pick};
 use crate::rng::GameRng;
 use crate::stats::{GameOutcome, MAX_INNINGS};
-use crate::team::{LINEUP, Team};
+use crate::team::{LINEUP, MAX_PITCHERS, Team};
 
 #[derive(Debug, Clone, Copy)]
 struct Runner {
@@ -20,12 +21,13 @@ struct Runner {
     earned: bool,
 }
 
-struct Sim<'a, S: Sink> {
+struct Sim<'a, 'm, S: Sink> {
     env: &'a Env,
     teams: [&'a Team; 2],
     rng: GameRng,
     out: GameOutcome,
     sink: &'a mut S,
+    managers: [&'m mut dyn Manager; 2],
     bases: [Option<Runner>; 3],
     outs: u8,
     inning: u8,
@@ -59,6 +61,28 @@ pub fn simulate_game<S: Sink>(
     game_id: u64,
     sink: &mut S,
 ) -> GameOutcome {
+    simulate_game_managed(
+        env,
+        away,
+        home,
+        league_seed,
+        game_id,
+        sink,
+        [&mut Baseline, &mut Baseline],
+    )
+}
+
+/// Like [`simulate_game`], with a manager for each side (`[away, home]`).
+/// Managers decide steals and pitching changes; the dice are the same.
+pub fn simulate_game_managed<S: Sink>(
+    env: &Env,
+    away: &Team,
+    home: &Team,
+    league_seed: u64,
+    game_id: u64,
+    sink: &mut S,
+    managers: [&mut dyn Manager; 2],
+) -> GameOutcome {
     let mut out = GameOutcome::new();
     out.pitch[0][0].used = true;
     out.pitch[1][0].used = true;
@@ -68,6 +92,7 @@ pub fn simulate_game<S: Sink>(
         rng: GameRng::for_game(league_seed, game_id),
         out,
         sink,
+        managers,
         bases: [None; 3],
         outs: 0,
         inning: 1,
@@ -83,10 +108,14 @@ pub fn simulate_game<S: Sink>(
     };
     sim.run();
     sim.sink.emit(GameEvent::GameOver);
+    let runs = sim.out.runs;
+    for m in &mut sim.managers {
+        m.game_over(runs);
+    }
     sim.out
 }
 
-impl<S: Sink> Sim<'_, S> {
+impl<S: Sink> Sim<'_, '_, S> {
     fn run(&mut self) {
         for inning in 1..=MAX_INNINGS {
             self.inning = inning as u8;
@@ -108,6 +137,35 @@ impl<S: Sink> Sim<'_, S> {
         let side = usize::from(self.rng.next_u64() & 1 == 1);
         self.out.runs[side] += 1;
         self.out.line[side][MAX_INNINGS - 1] += 1;
+    }
+
+    fn view(&self) -> GameView {
+        let fld = 1 - self.bat;
+        let line = self.out.pitch[fld][usize::from(self.pitcher[fld])];
+        let mut used = [false; MAX_PITCHERS];
+        for (i, u) in used
+            .iter_mut()
+            .enumerate()
+            .take(self.teams[fld].pitchers().len())
+        {
+            *u = self.out.pitch[fld][i].used;
+        }
+        GameView {
+            inning: self.inning,
+            bat: self.bat as u8,
+            outs: self.outs,
+            bases: [
+                self.bases[0].is_some(),
+                self.bases[1].is_some(),
+                self.bases[2].is_some(),
+            ],
+            runs: self.out.runs,
+            pitcher: self.pitcher[fld],
+            pitchers: self.teams[fld].pitchers().len() as u8,
+            pitches_in_outing: line.pitches.saturating_sub(self.outing_p0[fld]),
+            runs_in_outing: line.r.saturating_sub(self.outing_r0[fld]),
+            used,
+        }
     }
 
     fn half(&self) -> Half {
@@ -148,6 +206,10 @@ impl<S: Sink> Sim<'_, S> {
             self.sink.emit(GameEvent::GhostRunner { runner: slot });
         }
         while self.outs < 3 {
+            let view = self.view();
+            for m in &mut self.managers {
+                m.observe(&view);
+            }
             self.try_steal();
             if self.outs >= 3 {
                 break;
@@ -217,8 +279,15 @@ impl<S: Sink> Sim<'_, S> {
         } else {
             return;
         };
-        if !self.chance(attempt) {
-            return;
+        let view = self.view();
+        match self.managers[self.bat].steal(&view, from as u8 + 1) {
+            StealCall::Hold => return,
+            StealCall::Go => {}
+            StealCall::Default => {
+                if !self.chance(attempt) {
+                    return;
+                }
+            }
         }
         let Some(runner) = self.bases[from].take() else {
             return;
@@ -564,6 +633,19 @@ impl<S: Sink> Sim<'_, S> {
         let outing_pitches = line.pitches.saturating_sub(self.outing_p0[fld]);
         let last = count - 1;
 
+        let view = self.view();
+        match self.managers[fld].relief(&view, half_start) {
+            ReliefCall::Keep => return,
+            ReliefCall::Bring(i) => {
+                let i = usize::from(i);
+                if i < count && i != cur && !self.out.pitch[fld][i].used {
+                    self.bring_in(fld, i);
+                }
+                return;
+            }
+            ReliefCall::Default => {}
+        }
+
         let lead = i32::from(self.out.runs[fld]) - i32::from(self.out.runs[self.bat]);
         if half_start
             && self.inning >= 9
@@ -589,6 +671,12 @@ impl<S: Sink> Sim<'_, S> {
     }
 
     fn pick_reliever(&mut self, fld: usize, last: usize) -> Option<usize> {
+        // Skip anyone a manager has already used out of order.
+        while usize::from(self.next_reliever[fld]) < last
+            && self.out.pitch[fld][usize::from(self.next_reliever[fld])].used
+        {
+            self.next_reliever[fld] += 1;
+        }
         let next = usize::from(self.next_reliever[fld]);
         if next < last {
             self.next_reliever[fld] += 1;

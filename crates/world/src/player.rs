@@ -2,14 +2,16 @@
 
 use rand_core::RngCore;
 
+use serde::{Deserialize, Serialize};
+
 use crate::rating::{Kind, Model, Z, normal, uniform};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PlayerId(pub u32);
 
 /// Where a prospect comes from; sets the age he turns pro and how uncertain
 /// his development is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Origin {
     HighSchool,
     College,
@@ -38,7 +40,7 @@ impl Origin {
 }
 
 /// Where a signed player plays. Order: best first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Level {
     Majors,
     Triple,

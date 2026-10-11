@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use sim_core::{Env, GameOutcome, LINEUP, NullSink, simulate_game};
+use sim_core::{Baseline, Env, GameOutcome, LINEUP, Manager, NullSink, simulate_game_managed};
 
 use crate::club::Club;
 use crate::playoffs::{self, Playoffs};
@@ -75,24 +75,16 @@ impl SeasonResult {
     }
 }
 
-fn teams_of<'a>(clubs: &'a [Club], f: &Fixture) -> (&'a sim_core::Team, &'a sim_core::Team) {
-    (
-        &clubs[usize::from(f.away)].rotation[usize::from(f.away_starter)],
-        &clubs[usize::from(f.home)].rotation[usize::from(f.home_starter)],
-    )
-}
-
 /// Play one scheduled game again from its stream, exactly as it was played.
 #[must_use]
 pub fn replay_game(env: &Env, clubs: &[Club], f: &Fixture, seed: u64, season: u32) -> GameOutcome {
-    let (away, home) = teams_of(clubs, f);
-    simulate_game(
+    play_fixture(
         env,
-        away,
-        home,
+        &clubs[usize::from(f.away)],
+        &clubs[usize::from(f.home)],
+        f,
         seed,
-        game_id(season, f.number),
-        &mut NullSink,
+        season,
     )
 }
 
@@ -105,15 +97,51 @@ pub fn replay_game_with(
     seed: u64,
     season: u32,
 ) -> GameOutcome {
-    let away = &clubs[usize::from(f.away)].rotation[usize::from(f.away_starter)];
-    let home = &clubs[usize::from(f.home)].rotation[usize::from(f.home_starter)];
-    simulate_game(
+    play_fixture(
         env,
-        away,
-        home,
+        clubs[usize::from(f.away)],
+        clubs[usize::from(f.home)],
+        f,
+        seed,
+        season,
+    )
+}
+
+fn play_fixture(
+    env: &Env,
+    away: &Club,
+    home: &Club,
+    f: &Fixture,
+    seed: u64,
+    season: u32,
+) -> GameOutcome {
+    let a = &away.rotation[usize::from(f.away_starter)];
+    let h = &home.rotation[usize::from(f.home_starter)];
+    let mut ma = away
+        .manager
+        .as_ref()
+        .map(|m| m.make(usize::from(f.away_starter)));
+    let mut mh = home
+        .manager
+        .as_ref()
+        .map(|m| m.make(usize::from(f.home_starter)));
+    let (mut ba, mut bh) = (Baseline, Baseline);
+    let ra: &mut dyn Manager = match ma.as_mut() {
+        Some(b) => b.as_mut(),
+        None => &mut ba,
+    };
+    let rh: &mut dyn Manager = match mh.as_mut() {
+        Some(b) => b.as_mut(),
+        None => &mut bh,
+    };
+    simulate_game_managed(
+        env,
+        a,
+        h,
         seed,
         game_id(season, f.number),
         &mut NullSink,
+        [ra, rh],
     )
 }
 

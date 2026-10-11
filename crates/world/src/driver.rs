@@ -38,7 +38,7 @@ pub fn offseason(w: &mut World, log: &mut Vec<Event>) -> Result<(), WorldError> 
         let Some(&team) = d.order.get(d.next) else {
             break;
         };
-        let cmd = draft_pick(&GmView::new(w, team)).expect("a club is on the clock");
+        let cmd = draft_pick(&GmView::new(w, team).observe()).expect("a club is on the clock");
         exec(w, log, gm(team), cmd)?;
     }
     exec(w, log, c, Command::CloseDraft)?;
@@ -49,7 +49,7 @@ pub fn offseason(w: &mut World, log: &mut Vec<Event>) -> Result<(), WorldError> 
         let mut signed = false;
         for k in 0..TEAMS {
             let team = ((first + k) % TEAMS) as u8;
-            if let Some(cmd) = free_agency_step(&GmView::new(w, team)) {
+            if let Some(cmd) = free_agency_step(&GmView::new(w, team).observe()) {
                 exec(w, log, gm(team), cmd)?;
                 signed = true;
             }
@@ -59,7 +59,7 @@ pub fn offseason(w: &mut World, log: &mut Vec<Event>) -> Result<(), WorldError> 
         }
     }
     for team in 0..TEAMS as u8 {
-        for cmd in set_levels(&GmView::new(w, team)) {
+        for cmd in set_levels(&GmView::new(w, team).observe()) {
             exec(w, log, gm(team), cmd)?;
         }
     }

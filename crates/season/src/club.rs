@@ -1,12 +1,28 @@
 use calibration::{Talent, generate, teams_by_starter};
-use sim_core::{Rates, Team};
+use std::sync::Arc;
+
+use sim_core::{ManagerMaker, Rates, Team};
 
 /// A club: a name and its roster as one playable [`Team`] per rotation slot
 /// (the same players with a different starter).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Club {
     pub name: String,
     pub rotation: Vec<Team>,
+    /// Field manager; `None` plays the engine's built-in behaviour.
+    pub manager: Option<Arc<dyn ManagerMaker>>,
+}
+
+impl PartialEq for Club {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.rotation == other.rotation
+            && match (&self.manager, &other.manager) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
+    }
 }
 
 impl Club {
@@ -47,6 +63,7 @@ pub fn fictional_league(league: &Rates, talent: &Talent, teams: usize, seed: u64
         .map(|spec| Club {
             name: spec.name.clone(),
             rotation: teams_by_starter(spec),
+            manager: None,
         })
         .collect()
 }

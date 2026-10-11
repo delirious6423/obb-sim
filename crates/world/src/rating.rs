@@ -29,7 +29,9 @@ const SPREAD_SCALE: f64 = 0.85;
 /// that rates share a denominator, which the renormalisation already creates).
 const CORRELATION_KEPT: f64 = 0.5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Kind {
     Batter,
     Pitcher,

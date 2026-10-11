@@ -13,7 +13,9 @@ rand_chacha.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
 season.workspace = true
+serde.workspace = true
 sim-core.workspace = true
+tactics.workspace = true
 thiserror.workspace = true
 
 [lints]

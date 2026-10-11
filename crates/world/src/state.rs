@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use season::{Record, Series};
+use std::sync::{Arc, OnceLock};
+
 use sim_core::Env;
+use tactics::{DecisionLog, Tables};
 
 use crate::player::{Player, PlayerId, Pool};
 use crate::rating::Model;
@@ -22,7 +25,7 @@ pub const ROSTER_MAX_PER_KIND: usize = 60;
 /// (bonuses, paying off released contracts).
 pub const CREDIT: f64 = 25.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Phase {
     Unfounded,
     /// Rosters set; the season can be played.
@@ -66,6 +69,17 @@ impl Default for Rules {
     }
 }
 
+/// How a club's field manager runs games.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Tactics {
+    /// The engine's built-in rules.
+    #[default]
+    Baseline,
+    /// Decides steals and pitching changes with run-expectancy and
+    /// win-probability tables.
+    Tables,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClubState {
     pub name: String,
@@ -80,6 +94,7 @@ pub struct ClubState {
     pub hype: f64,
     pub win_pct_prev: f64,
     pub players: BTreeSet<PlayerId>,
+    pub tactics: Tactics,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,6 +160,13 @@ pub struct World {
     pub last_records: Vec<Record>,
     pub model: Model,
     pub env: Env,
+    /// Run-expectancy and win-probability tables, built from the simulation
+    /// the first time a manager needs them.
+    pub(crate) tables: Arc<OnceLock<Arc<Tables>>>,
+    /// What each club's table manager has decided so far. Diagnostic only:
+    /// not part of the league state. Shared by every clone of the world, so
+    /// counts from scratch copies (and what-if runs) are included.
+    pub(crate) logs: Vec<Arc<DecisionLog>>,
 }
 
 impl PartialEq for World {

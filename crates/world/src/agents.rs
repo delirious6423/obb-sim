@@ -3,6 +3,8 @@
 //! a club's own books and roster, the public market, and noisy scouting
 //! reports. They never read a player's true talent.
 
+use serde::{Deserialize, Serialize};
+
 use crate::command::Command;
 use crate::player::{Level, Origin, PlayerId, slot_bonus};
 use crate::rating::Kind;
@@ -16,7 +18,7 @@ const SIGNABLE: f64 = 1.5;
 const UPGRADE_MARGIN: f64 = 0.0015;
 
 /// A player as one club sees him.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Seen {
     pub id: PlayerId,
     pub kind: Kind,
@@ -67,6 +69,37 @@ fn by_score_desc(a: &Seen, b: &Seen) -> std::cmp::Ordering {
         .then(a.id.cmp(&b.id))
 }
 
+/// The pick on the clock for a club.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftObs {
+    /// Index of the pick in the draft order.
+    pub pick: usize,
+    /// Largest signing bonus the pick will sign for.
+    pub ceiling: f64,
+    /// Whether this is an international round.
+    pub international: bool,
+    /// Prospects still available, as this club sees them.
+    pub prospects: Vec<Seen>,
+}
+
+/// Everything a general manager may see: the club's own books and roster,
+/// the public market, noisy scouting reports. No true talent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GmObs {
+    pub team: u8,
+    pub year: i32,
+    pub phase: Phase,
+    pub cash: f64,
+    pub budget: f64,
+    pub payroll: f64,
+    pub payroll_cap: f64,
+    pub war_price: f64,
+    pub roster: Vec<Seen>,
+    pub free_agents: Vec<Seen>,
+    /// Present only while this club is on the clock.
+    pub draft: Option<DraftObs>,
+}
+
 /// A general manager's window on the league.
 pub struct GmView<'a> {
     w: &'a World,
@@ -100,38 +133,8 @@ impl<'a> GmView<'a> {
         }
     }
 
-    #[must_use]
-    pub fn roster(&self) -> Vec<Seen> {
-        self.w.clubs[usize::from(self.team)]
-            .players
-            .iter()
-            .map(|id| self.see(*id))
-            .collect()
-    }
-
-    #[must_use]
-    pub fn free_agents(&self) -> Vec<Seen> {
-        self.w.free_agents.iter().map(|id| self.see(*id)).collect()
-    }
-
-    #[must_use]
-    pub fn payroll(&self) -> f64 {
-        self.w.payroll(usize::from(self.team))
-    }
-
-    #[must_use]
-    pub fn budget(&self) -> f64 {
-        self.w.clubs[usize::from(self.team)].budget
-    }
-
-    #[must_use]
-    pub fn war_price(&self) -> f64 {
-        self.w.rules.war_price
-    }
-
-    /// The pick on the clock for this club: (pick index, signable-bonus
-    /// ceiling, whether it is an international round, prospects left).
-    fn on_the_clock(&self) -> Option<(usize, f64, bool)> {
+    /// The pick on the clock for this club.
+    fn draft(&self) -> Option<DraftObs> {
         if self.w.phase != Phase::Drafting {
             return None;
         }
@@ -139,28 +142,48 @@ impl<'a> GmView<'a> {
         if d.order.get(d.next) != Some(&self.team) {
             return None;
         }
-        let intl = d.next >= d.amateur_picks;
-        let slot = if intl {
+        let international = d.next >= d.amateur_picks;
+        let slot = if international {
             1.0
         } else {
             slot_bonus((d.next + 1) as u16)
         };
-        Some((d.next, SIGNABLE * slot, intl))
+        Some(DraftObs {
+            pick: d.next,
+            ceiling: SIGNABLE * slot,
+            international,
+            prospects: d.remaining.iter().map(|id| self.see(*id)).collect(),
+        })
+    }
+
+    #[must_use]
+    pub fn observe(&self) -> GmObs {
+        let c = &self.w.clubs[usize::from(self.team)];
+        GmObs {
+            team: self.team,
+            year: self.w.year,
+            phase: self.w.phase,
+            cash: c.cash,
+            budget: c.budget,
+            payroll: self.w.payroll(usize::from(self.team)),
+            payroll_cap: self.w.rules.payroll_cap,
+            war_price: self.w.rules.war_price,
+            roster: c.players.iter().map(|id| self.see(*id)).collect(),
+            free_agents: self.w.free_agents.iter().map(|id| self.see(*id)).collect(),
+            draft: self.draft(),
+        }
     }
 }
 
 /// Make the club's draft pick: the best-scouted prospect who will sign.
 #[must_use]
-pub fn draft_pick(v: &GmView) -> Option<Command> {
-    let (_, ceiling, intl) = v.on_the_clock()?;
-    let d = v.w.draft.as_ref()?;
+pub fn draft_pick(v: &GmObs) -> Option<Command> {
+    let d = v.draft.as_ref()?;
     let mut best: Option<Seen> = None;
-    for id in &d.remaining {
-        let s = v.see(*id);
-        let cash = v.w.clubs[usize::from(v.team)].cash;
-        if (s.origin == Origin::International) != intl
-            || s.demand > ceiling
-            || cash - s.demand < -CREDIT
+    for s in &d.prospects {
+        if (s.origin == Origin::International) != d.international
+            || s.demand > d.ceiling
+            || v.cash - s.demand < -CREDIT
         {
             continue;
         }
@@ -171,8 +194,8 @@ pub fn draft_pick(v: &GmView) -> Option<Command> {
                 .then(b.id.cmp(&a.id))
                 == std::cmp::Ordering::Greater
         };
-        if best.is_none_or(|b| better(&s, &b)) {
-            best = Some(s);
+        if best.is_none_or(|b| better(s, &b)) {
+            best = Some(*s);
         }
     }
     Some(match best {
@@ -186,14 +209,14 @@ pub fn draft_pick(v: &GmView) -> Option<Command> {
 
 /// One free-agent signing, or `None` when the club is content.
 #[must_use]
-pub fn free_agency_step(v: &GmView) -> Option<Command> {
-    let roster = v.roster();
-    let fa = v.free_agents();
-    let payroll = v.payroll();
-    let price = v.war_price();
+pub fn free_agency_step(v: &GmObs) -> Option<Command> {
+    let roster = &v.roster;
+    let fa = &v.free_agents;
+    let payroll = v.payroll;
+    let price = v.war_price;
     let room = |ask: f64| {
         ask <= MIN_SALARY + 1e-9
-            || (payroll + ask <= v.budget() + 1e-9 && payroll + ask <= v.w.rules.payroll_cap)
+            || (payroll + ask <= v.budget + 1e-9 && payroll + ask <= v.payroll_cap)
     };
     let mut best: Option<(f64, Seen)> = None;
     for kind in [Kind::Batter, Kind::Pitcher] {
@@ -232,9 +255,9 @@ pub fn free_agency_step(v: &GmView) -> Option<Command> {
 /// Put the roster in order: best thirteen of each kind in the majors, then
 /// the minor-league levels; release whoever does not fit.
 #[must_use]
-pub fn set_levels(v: &GmView) -> Vec<Command> {
-    let roster = v.roster();
-    let mut cash = v.w.clubs[usize::from(v.team)].cash;
+pub fn set_levels(v: &GmObs) -> Vec<Command> {
+    let roster = &v.roster;
+    let mut cash = v.cash;
     let mut out = Vec::new();
     for kind in [Kind::Batter, Kind::Pitcher] {
         let mut mine: Vec<&Seen> = roster.iter().filter(|s| s.kind == kind).collect();
@@ -272,15 +295,58 @@ pub fn set_levels(v: &GmView) -> Vec<Command> {
     out
 }
 
+/// What an owner may see: the club's books and the league's payroll limits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnerObs {
+    pub team: u8,
+    pub year: i32,
+    pub phase: Phase,
+    pub market: f64,
+    pub cash: f64,
+    pub revenue_prev: f64,
+    pub hype: f64,
+    pub win_pct_prev: f64,
+    pub payroll: f64,
+    pub budget: f64,
+    pub payroll_floor: f64,
+    pub payroll_cap: f64,
+}
+
+impl OwnerObs {
+    #[must_use]
+    pub fn new(w: &World, team: u8) -> Self {
+        let c = &w.clubs[usize::from(team)];
+        Self {
+            team,
+            year: w.year,
+            phase: w.phase,
+            market: c.market,
+            cash: c.cash,
+            revenue_prev: c.revenue_prev,
+            hype: c.hype,
+            win_pct_prev: c.win_pct_prev,
+            payroll: w.payroll(usize::from(team)),
+            budget: c.budget,
+            payroll_floor: w.rules.payroll_floor,
+            payroll_cap: w.rules.payroll_cap,
+        }
+    }
+}
+
 /// The owner's payroll budget for the coming season, from what the club
 /// earned last year and how much cash it holds.
 #[must_use]
+pub fn owner_budget_for(o: &OwnerObs) -> f64 {
+    let other = 80.0 + 10.0 * o.market;
+    let reserve = 0.2 * o.revenue_prev;
+    let cash_push = 0.25 * (o.cash - reserve).clamp(-80.0, 40.0);
+    (0.95 * o.revenue_prev - other + cash_push).clamp(o.payroll_floor, o.payroll_cap)
+}
+
+#[must_use]
 pub fn owner_budget(w: &World, team: u8) -> Command {
-    let c = &w.clubs[usize::from(team)];
-    let other = 80.0 + 10.0 * c.market;
-    let reserve = 0.2 * c.revenue_prev;
-    let cash_push = 0.25 * (c.cash - reserve).clamp(-80.0, 40.0);
-    let payroll = (0.95 * c.revenue_prev - other + cash_push)
-        .clamp(w.rules.payroll_floor, w.rules.payroll_cap);
-    Command::SetBudget { team, payroll }
+    Command::SetBudget {
+        team,
+        payroll: owner_budget_for(&OwnerObs::new(w, team)),
+    }
 }

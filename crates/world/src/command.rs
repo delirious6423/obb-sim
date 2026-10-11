@@ -6,7 +6,7 @@ use season::{Record, Series};
 use thiserror::Error;
 
 use crate::player::{Contract, Level, Player, PlayerId};
-use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules};
+use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules, Tactics};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -49,6 +49,11 @@ pub enum Command {
         player: PlayerId,
         level: Level,
     },
+    // Field manager
+    SetTactics {
+        team: u8,
+        tactics: Tactics,
+    },
 }
 
 impl Command {
@@ -70,6 +75,7 @@ impl Command {
             | Command::SignFreeAgent { .. }
             | Command::ReleasePlayer { .. }
             | Command::SetLevel { .. } => Role::Gm,
+            Command::SetTactics { .. } => Role::FieldManager,
         }
     }
 
@@ -82,7 +88,8 @@ impl Command {
             | Command::PassPick { team }
             | Command::SignFreeAgent { team, .. }
             | Command::ReleasePlayer { team, .. }
-            | Command::SetLevel { team, .. } => Some(*team),
+            | Command::SetLevel { team, .. }
+            | Command::SetTactics { team, .. } => Some(*team),
             _ => None,
         }
     }
@@ -202,6 +209,10 @@ pub enum Event {
     },
     SeasonStarted {
         year: i32,
+    },
+    TacticsSet {
+        team: u8,
+        tactics: Tactics,
     },
 }
 

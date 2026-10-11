@@ -10,6 +10,8 @@ members = [
     "crates/calibration",
     "crates/season",
     "crates/world",
+    "crates/tactics",
+    "crates/connect",
 ]
 
 [workspace.package]
@@ -35,6 +37,8 @@ storage = { path = "crates/storage" }
 calibration = { path = "crates/calibration" }
 season = { path = "crates/season" }
 world = { path = "crates/world" }
+tactics = { path = "crates/tactics" }
+connect = { path = "crates/connect" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

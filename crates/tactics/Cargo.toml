@@ -1,0 +1,14 @@
+[package]
+name = "tactics"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+libm.workspace = true
+rayon.workspace = true
+sim-core.workspace = true
+
+[lints]
+workspace = true

@@ -64,6 +64,8 @@ impl World {
             last_records: Vec::new(),
             model,
             env: sim_core::Env::new(params).expect("valid parameters"),
+            tables: Default::default(),
+            logs: (0..TEAMS).map(|_| Default::default()).collect(),
         }
     }
 
@@ -186,6 +188,16 @@ impl World {
                 Ok(vec![Event::BudgetSet {
                     team: *team,
                     payroll: *payroll,
+                }])
+            }
+            Command::SetTactics { team, tactics } => {
+                self.check_team(*team)?;
+                if self.phase == Phase::Unfounded {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                Ok(vec![Event::TacticsSet {
+                    team: *team,
+                    tactics: *tactics,
                 }])
             }
             Command::DraftPlayer { team, player } => {
@@ -497,6 +509,7 @@ impl World {
                     hype: 1.0,
                     win_pct_prev: 0.5,
                     players: Default::default(),
+                    tactics: Default::default(),
                 }
             })
             .collect();
