@@ -4,7 +4,9 @@
 //!     cargo test --release -- --ignored calibration
 //!
 //! Passes only if league K%, BB% and HR per plate appearance are each within
-//! +-3% (relative) of the 2015-2019 target.
+//! +-3% (relative) of the 2015-2019 target, and so are runs per team-game
+//! (against the designated-hitter-equivalent run environment, played under
+//! 2015-2019 rules: no automatic runner in extra innings).
 
 use std::path::Path;
 
@@ -35,6 +37,6 @@ fn calibration_gate() {
     );
     assert!(
         report.passed(),
-        "K%, BB% and HR/PA must each be within +-3% relative of the target"
+        "K%, BB%, HR/PA and runs/team-game must each be within +-3% relative of the target"
     );
 }

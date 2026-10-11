@@ -81,6 +81,17 @@ struct BaserunningFile {
     sb3_success: f64,
 }
 
+/// League run environment from the data file.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct RunEnvironment {
+    /// Runs per team-game as played (pitchers batting in part of the sample).
+    pub runs_per_team_game: f64,
+    /// The same with pitcher plate appearances replaced by average-batter ones,
+    /// which is what a universal designated hitter looks like.
+    pub runs_per_team_game_dh: f64,
+    pub extra_inning_share: f64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ParamsFile {
     source: String,
@@ -90,6 +101,7 @@ struct ParamsFile {
     pitches_per_pa: Eight,
     fielding: FieldingFile,
     baserunning: BaserunningFile,
+    run_environment: RunEnvironment,
 }
 
 /// True-talent spread: relative standard deviation of each outcome's rate
@@ -107,6 +119,7 @@ pub struct Calibration {
     pub pa: u64,
     pub params: GameParams,
     pub talent: Talent,
+    pub run_environment: RunEnvironment,
 }
 
 impl Calibration {
@@ -145,11 +158,14 @@ impl Calibration {
                 sb3_success: b.sb3_success,
             },
             pitches: f.pitches_per_pa.array(),
+            // 2015-2019 rules: no automatic runner in extra innings.
+            extra_inning_runner: false,
         };
         Ok(Self {
             source: f.source,
             pa: f.pa,
             params,
+            run_environment: f.run_environment,
             talent: Talent {
                 batter_sd: f.talent.batter.array(),
                 pitcher_sd: f.talent.pitcher.array(),

@@ -46,6 +46,8 @@ pub struct GameParams {
     pub running: Baserunning,
     /// Mean pitches thrown in a plate appearance, by outcome.
     pub pitches: [f64; OUTCOMES],
+    /// Rules: start every extra inning with a runner on second.
+    pub extra_inning_runner: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +106,7 @@ impl GameParams {
                 sb3_success: 0.70,
             },
             pitches: [4.8, 5.6, 3.3, 3.4, 3.5, 3.6, 3.5, 3.4],
+            extra_inning_runner: true,
         }
     }
 

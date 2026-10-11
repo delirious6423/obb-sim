@@ -46,6 +46,12 @@ BR_SPEC = (
 )
 
 
+# Generic linear-weight run values per outcome (runs relative to an out), in
+# OUTCOMES order. Textbook constants, used only to convert pitcher plate
+# appearances into designated-hitter ones for the run-environment target.
+LINEAR_WEIGHTS = (-0.03, 0.70, 0.73, 0.89, 1.26, 1.59, 2.05, 0.0)
+
+
 class Totals:
     def __init__(self):
         self.games = 0
@@ -69,6 +75,9 @@ class Totals:
         self.pit = {}
         self.balls = {"G": 0, "F": 0, "L": 0}
         self.opp_counted = 0
+        self.runs = 0
+        self.extra_games = 0
+        self.pitcher_outcome = [0] * 8
 
 
 def classify(base):
@@ -294,6 +303,8 @@ def process_play(tot, st, ev, batter, pit_id, pitches, count_it):
             else:
                 batter_out = True
 
+    tot.runs += scored
+
     # Conservation: every runner (and the batter) ends on a base, scores or is out.
     before = sum(entering[1:]) + (1 if is_pa else 0)
     after = sum(new[1:]) + scored + runner_outs + steal_outs + (1 if batter_out else 0)
@@ -306,6 +317,9 @@ def process_play(tot, st, ev, batter, pit_id, pitches, count_it):
         if st["pa_count"]:
             count_opportunity(tot, pre)
         st["pa_pre"] = None
+
+    if is_pa and not count_it:
+        tot.pitcher_outcome[OUTCOME_INDEX.get(kind, 7)] += 1
 
     if is_pa and count_it:
         oc = OUTCOME_INDEX.get(kind, 7)
@@ -407,6 +421,8 @@ def run_text(text, tot):
                 tot.malformed += 1
                 continue
             key = (f[1], f[2])
+            if f[1].isdigit():
+                game["max_inn"] = max(game.get("max_inn", 0), int(f[1]))
             if key != half:
                 flush_pending()
                 half = key
@@ -428,6 +444,10 @@ def finish_game(game, tot):
         tot.games += 1
     elif game["regular"]:
         tot.games += 1
+    else:
+        return
+    if game.get("max_inn", 0) > 9:
+        tot.extra_games += 1
 
 
 def fetch(year):
@@ -512,6 +532,22 @@ def build(tot):
     bat_sd, bat_n = spread(tot.bat, league_vals, frozenset(), MIN_QUALIFIER_PA)
     pit_sd, pit_n = spread(tot.pit, league_vals, frozenset(), 200)
 
+    # Run environment. Pitchers batted in part of the sample, but the simulator
+    # uses a designated hitter for everyone, so also report the runs per team-game
+    # as if each pitcher plate appearance had been a league-average batter's.
+    team_games = 2 * tot.games
+    pitcher_pa = sum(tot.pitcher_outcome)
+    value = lambda rates: sum(r * w for r, w in zip(rates, LINEAR_WEIGHTS))
+    pitcher_rates = [x / pitcher_pa for x in tot.pitcher_outcome] if pitcher_pa else league_vals
+    dh_gain = (pitcher_pa / team_games) * (value(league_vals) - value(pitcher_rates))
+    run_env = {
+        "runs_per_team_game": tot.runs / team_games,
+        "runs_per_team_game_dh": tot.runs / team_games + dh_gain,
+        "extra_inning_share": tot.extra_games / tot.games,
+        "pitcher_pa_per_team_game": pitcher_pa / team_games,
+        "pitcher_rates": dict(zip(OUTCOMES, pitcher_rates)),
+    }
+
     return {
         "source": "Retrosheet 2015-2019 regular-season event files, aggregated by tools/build_params.py",
         "pa": tot.pa,
@@ -523,6 +559,7 @@ def build(tot):
         "pitches_per_pa": dict(zip(OUTCOMES, pitches)),
         "fielding": fielding,
         "baserunning": baserunning,
+        "run_environment": run_env,
     }, {"bat_n": bat_n, "pit_n": pit_n}
 
 
@@ -535,6 +572,10 @@ def report(tot, params, counts):
         print("  league %-7s %.4f" % (name, val))
     print("GDP-flagged plays per team-game: %.3f" % (tot.gdp_flag / team_games))
     print("ground-out double plays by outs per team-game: %.3f" % (tot.gdp_computed / team_games))
+    env = params["run_environment"]
+    print("runs per team-game: %.3f (DH-equivalent %.3f); extra-inning games: %.1f%%; pitcher PA per team-game: %.2f"
+          % (env["runs_per_team_game"], env["runs_per_team_game_dh"],
+             100 * env["extra_inning_share"], env["pitcher_pa_per_team_game"]))
     print("state-consistency mismatches: %d of %d plays (%.4f%%)"
           % (tot.cons_bad, tot.cons_checked, 100.0 * tot.cons_bad / max(1, tot.cons_checked)))
     top = sorted(tot.unknown.items(), key=lambda kv: -kv[1])[:10]

@@ -93,6 +93,9 @@ pub struct Report {
     /// Outcomes that must be within `tolerance` (relative) for the gate.
     pub gated: Vec<Outcome>,
     pub tolerance: f64,
+    /// Target runs per team-game (designated-hitter equivalent), gated too.
+    pub runs_target: f64,
+    pub extra_inning_target: f64,
 }
 
 impl Report {
@@ -103,7 +106,19 @@ impl Report {
             target: cal.params.league.0,
             gated,
             tolerance,
+            runs_target: cal.run_environment.runs_per_team_game_dh,
+            extra_inning_target: cal.run_environment.extra_inning_share,
         }
+    }
+
+    #[must_use]
+    pub fn runs_per_team_game(&self) -> f64 {
+        self.totals.runs as f64 / (2.0 * self.totals.games as f64)
+    }
+
+    #[must_use]
+    pub fn runs_relative_error(&self) -> f64 {
+        self.runs_per_team_game() / self.runs_target - 1.0
     }
 
     #[must_use]
@@ -113,9 +128,11 @@ impl Report {
 
     #[must_use]
     pub fn passed(&self) -> bool {
-        self.gated
-            .iter()
-            .all(|o| self.relative_error(*o).abs() <= self.tolerance)
+        self.runs_relative_error().abs() <= self.tolerance
+            && self
+                .gated
+                .iter()
+                .all(|o| self.relative_error(*o).abs() <= self.tolerance)
     }
 
     #[must_use]
@@ -132,14 +149,7 @@ impl Report {
         ];
         let mut s = String::new();
         let t = &self.totals;
-        let _ = writeln!(
-            s,
-            "{} games, {} plate appearances, {:.2} runs/team/game, {:.1}% extra-inning games",
-            t.games,
-            t.pa,
-            t.runs as f64 / (2.0 * t.games as f64),
-            100.0 * t.extra_inning_games as f64 / t.games as f64
-        );
+        let _ = writeln!(s, "{} games, {} plate appearances", t.games, t.pa);
         let _ = writeln!(
             s,
             "{:<14} {:>10} {:>10} {:>9}  gate (+-3%)",
@@ -165,6 +175,26 @@ impl Report {
                 verdict
             );
         }
+        let runs_verdict = if self.runs_relative_error().abs() <= self.tolerance {
+            "PASS"
+        } else {
+            "FAIL"
+        };
+        let _ = writeln!(
+            s,
+            "{:<14} {:>10.3} {:>10.3} {:>+8.2}%  {}",
+            "runs/team-game",
+            self.runs_per_team_game(),
+            self.runs_target,
+            100.0 * self.runs_relative_error(),
+            runs_verdict
+        );
+        let _ = writeln!(
+            s,
+            "extra-inning games {:.1}% (target {:.1}%, not gated)",
+            100.0 * t.extra_inning_games as f64 / t.games as f64,
+            100.0 * self.extra_inning_target
+        );
         let _ = writeln!(
             s,
             "steals {} / caught {} ({:.0}% success), errors {}",

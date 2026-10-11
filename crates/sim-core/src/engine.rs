@@ -39,6 +39,9 @@ struct Sim<'a, S: Sink> {
     outing_p0: [u16; 2],
     /// Runs scored in the plate appearance being resolved.
     pa_runs: u8,
+    /// The plate appearance being resolved is a home run (all runners score even
+    /// when the winning run has already crossed).
+    home_run_pa: bool,
 }
 
 /// Play one game and return its result and statistics.
@@ -72,6 +75,7 @@ pub fn simulate_game<S: Sink>(
         outing_r0: [0; 2],
         outing_p0: [0; 2],
         pa_runs: 0,
+        home_run_pa: false,
     };
     sim.run();
     sim.sink.emit(GameEvent::GameOver);
@@ -126,7 +130,7 @@ impl<S: Sink> Sim<'_, S> {
             half: self.half(),
         });
         self.relief_check(true);
-        if self.inning >= 10 {
+        if self.inning >= 10 && self.env.params.extra_inning_runner {
             // Runner on second to start every extra inning: the batter who
             // made the last out of the previous inning's order.
             let fld = 1 - self.bat;
@@ -157,6 +161,11 @@ impl<S: Sink> Sim<'_, S> {
 
     fn score(&mut self, runner: Runner, earned_ok: bool) {
         let bat = self.bat;
+        // Walk-off: play stops when the winning run crosses, so later runners
+        // do not score, except on a home run.
+        if self.walk_off() && !self.home_run_pa {
+            return;
+        }
         let fld = 1 - bat;
         self.out.runs[bat] += 1;
         let idx = usize::from(self.inning) - 1;
@@ -259,6 +268,10 @@ impl<S: Sink> Sim<'_, S> {
         let slot = self.next_batter[bat];
         let pit = self.pitcher[fld];
         let teams = self.teams;
+        debug_assert!(
+            self.bases.iter().flatten().all(|r| r.slot != slot),
+            "batter {slot} is also on base"
+        );
         let batter_rates = &teams[bat].batters()[usize::from(slot)].rates;
         let pitcher_rates = &teams[fld].pitchers()[usize::from(pit)].rates;
         let cum = self.env.log5.cumulative(batter_rates, pitcher_rates);
@@ -266,6 +279,7 @@ impl<S: Sink> Sim<'_, S> {
         let pitches = self.draw_pitches(outcome);
 
         self.pa_runs = 0;
+        self.home_run_pa = outcome == Outcome::HomeRun;
         let o = usize::from(self.outs);
         let run = self.env.params.running;
         let batter = Runner {
@@ -639,6 +653,69 @@ mod tests {
         let without = simulate_game(&env, &a, &h, 7, 3, &mut NullSink);
         assert_eq!(with_log, without);
         assert!(matches!(log.events.last(), Some(GameEvent::GameOver)));
+    }
+
+    /// Teams whose hitters get on base a lot, so extra innings with traffic
+    /// and walk-offs are common.
+    fn hitting_team(name: &str, k: f64) -> Team {
+        // order: K, BB, HBP, 1B, 2B, 3B, HR, in-play out
+        let rates = Rates::new([k, 0.15, 0.02, 0.25, 0.08, 0.01, 0.04, 0.45 - k]).unwrap();
+        let mk = |i: usize, who: &str| Player {
+            name: format!("{name} {who} {i}"),
+            rates,
+        };
+        Team::new(
+            name,
+            (0..9).map(|i| mk(i, "B")).collect(),
+            (0..7).map(|i| mk(i, "P")).collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn walk_off_ends_the_game_on_the_winning_run() {
+        let env = env();
+        let (a, h) = (hitting_team("Away", 0.2), hitting_team("Home", 0.2));
+        let mut walk_offs = 0;
+        for g in 0..3000 {
+            let mut log = PlayLog::default();
+            let o = simulate_game(&env, &a, &h, 77, g, &mut log);
+            let last = log.events.iter().rev().find_map(|e| match e {
+                GameEvent::Pa(p) => Some(*p),
+                _ => None,
+            });
+            let last_half = log.events.iter().rev().find_map(|e| match e {
+                GameEvent::HalfInningStart { half, .. } => Some(*half),
+                _ => None,
+            });
+            let Some(p) = last else { continue };
+            if o.runs[1] > o.runs[0] && p.outs_after < 3 && last_half == Some(Half::Bottom) {
+                walk_offs += 1;
+                if p.outcome != Outcome::HomeRun {
+                    assert_eq!(o.runs[1] - o.runs[0], 1, "game {g}: runs past the winner");
+                }
+            }
+        }
+        assert!(walk_offs > 100, "test needs walk-offs, saw {walk_offs}");
+    }
+
+    /// The automatic extra-inning runner is the previous batter; he must never
+    /// come to bat while still on base (checked by a debug assertion in the
+    /// plate-appearance code) however much traffic there is.
+    #[test]
+    fn ghost_runner_is_never_at_bat_while_on_base() {
+        let env = env();
+        let mut extras = 0;
+        for (i, k) in [0.05, 0.2, 0.3].into_iter().enumerate() {
+            let (a, h) = (hitting_team("Away", k), hitting_team("Home", k));
+            for g in 0..8_000 {
+                let o = simulate_game(&env, &a, &h, 5 + i as u64, g, &mut NullSink);
+                if o.innings > 9 {
+                    extras += 1;
+                }
+            }
+        }
+        assert!(extras > 100, "needs many extra-inning games, saw {extras}");
     }
 
     /// Whole-game bookkeeping must add up, game after game.

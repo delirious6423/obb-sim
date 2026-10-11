@@ -59,6 +59,9 @@ Decisions so far
 
 Gate: 1,000 simulated seasons give realistic AVG, ERA, HR and K% distributions; results identical on any core count.
 
+- [x] (2.0a) Explain runs/team-game 4.74 vs real ~4.5 (errors, steals, extra-inning runner, walk-offs); fix cause; gate runs/team-game at ±3% relative
+- [x] (2.0b) Walk-off: no runs credited past the winning run
+- [x] (2.0c) Targeted test for the ghost-runner-on-base case; fix if it reproduces, else keep test and log in Known gaps
 - [ ] Schedule generator, standings, playoffs
 - [ ] rayon parallel days with per-game RNG streams (results independent of thread count)
 - [ ] Speed benchmarks in CI
@@ -98,10 +101,12 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 
 ## Known gaps
 
-- Calibration gate is close to tautological for K/BB/HR (rosters are centred on the target). Run environment (4.70 runs/team/game vs ~4.5 real; ghost runner and universal DH explain part) is printed but not gated. Revisit in Phase 2 when 1,000-season distributions are gated.
+- Calibration gate is close to tautological for K/BB/HR (rosters are centred on the target); runs/team-game is now gated and does depend on baserunning/fielding.
+- Runs target is DH-equivalent: real 4.48 + pitcher-PA replacement (textbook linear weights, +0.22) = 4.70. Sim is 4.70 under 2015-2019 rules (`extra_inning_runner: false`); the extra-inning runner adds ~0.04. The earlier 4.74 was these two effects, not an engine bug.
+- Extra-inning games: sim 9.7% vs real 8.3% (not gated). Likely game-to-game run variance is too low (no park/weather/starter spread); revisit with Phase 2/3.
+- Errors per team-game in the sim (~0.32) are about half the real total because only reached-on-error is modelled (not throwing errors that advance runners).
 - Errors advance only the batter (and forced runners), not other runners.
-- Walk-off: runs after the winning run can still be credited within the same PA.
-- Ghost runner could in theory still be on base when his turn comes up (not reproduced).
+- Ghost runner at bat while on base: could not be reproduced (24,000 high-traffic games under a debug assertion; reasoning also shows it cannot happen). The test stays as a guard.
 - cli: Phase 1 viewer is `cli game <seed> --pbp` (no `sim` prefix).
 - `ai` views: `of(league, team)` constructors accept any team id; scoping depends on the caller.
 - `League::from_events` leaves `commands_applied` at 0 (events carry no commands).
@@ -111,4 +116,5 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 
 - **Phase 0**: workspace, deterministic sim-core, command/event league, role checks. CI green on ubuntu, macOS, Windows; golden values identical on all three.
 - **Phase 1**: log5 engine, baserunning, fielding, relief, box score/play-by-play; Retrosheet 2015-2019 aggregate tool; calibration crate. Gate PASS on 100k games: K +0.58%, BB -0.44%, HR/PA -0.42% (all within ±3%). Fixed a parser bug (force outs counted batter out) found by sanity check; reviewer found no blockers; fixed bases-loaded double play advancement. CI green on 3 OSes.
+- **Phase 2.0 (pre-work)**: runs/team-game explained (pitcher batting vs universal DH +0.22, extra-inning runner +0.04; not an engine bug) and gated at ±3% against a DH-equivalent target (sim 4.697 vs 4.699). `GameParams.extra_inning_runner` rule flag added (calibration uses 2015-2019 rules). Walk-off no longer credits runs past the winning run (home runs excepted). Ghost-runner guard test added.
 - **Phase 1 tidy-up**: four small commits closing the remaining review gaps (see checklist).
