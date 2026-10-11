@@ -154,16 +154,17 @@ cargo run --release -p ui
 
 **FAILING GATES**
 - `draft_gate` (Phase 3): reach rates are in range for picks 1-30 and 31-90, but mean career WAR per draftee is about 2x the sourced ranges in every bucket (picks 1-10 about 23-26 vs 9.5-12.8; 11-30 about 12-13 vs 4.5-8.7; 31-90 about 4.2-4.5 vs 0.8-3.3); bust rates are low; picks 91-300 reach 0.13 vs 0.17-0.35. Two root-cause attempts used. Thresholds not changed. It fails on all five seeds.
-- No other gate is failing: exploit-bot ladder, manager edge, stability (5 seeds), information, Phase 5 headless gate and the speed gate all pass.
+- `exploit_bots_gain_no_lasting_edge` (Phase 4b, broken by the Phase 7 economy): the hoarder bot (signs the best free agent at any price up to the budget) gains +0.0265 win% in seasons 26-50 (se 0.0037, z 7.08; limit z < 2 and edge <= 0.015). At v0.1 it lost (-0.027) because it went insolvent (mean cash -233) and a club below the credit line could not sign or release. Now it stays solvent (mean cash +95, payroll 213 vs 189 for the reference, profit about 49 vs 62 a year): extra wins cost about 2M each, and the reference leaves about 23M of its budget unspent. Attempt 1: a rescued club loses contracts down to the payroll floor at settlement (kept; test `a_rescued_club_loses_the_contracts_that_broke_it`; also applying it at StartSeason left rosters illegal, so not done there): edge barely moved. Attempt 2: fixed ticket price (diagnostic only, reverted): edge larger, so gate pricing is not the cause. Not fixed; no threshold changed, no payroll cap added. Likely lever: wins are too cheap relative to what they earn (price per WAR, hype to revenue) or the reference GM under-spends; needs an economy balance pass.
+- No other gate is failing: manager edge, stability (5 seeds), roles gate (Phase 7), information, Phase 5 headless gate and the speed gate pass.
 
 **Decisions I made that you may want to change**
 - `data/params.json` (6 KB of league-wide aggregates, no individual data) is committed and embedded so a clean checkout can run.
 - A save is a world snapshot; no command log is stored.
 - Roster editing is an offline tool on saves (names only), not an in-game screen.
 
-Phase 7 (owner and commissioner roles) and Phase 8 (online leagues) are NOT started. Waiting for the user to playtest and reply "continue".
+Phase 7 (owner and commissioner roles) is built (see its section); Phase 8 (online leagues) is NOT started. The user said "keep going" after the Phase 6 playtest stop.
 
-## Phase 7: owner and commissioner roles (in progress; started 2026-10-12 on the user's "keep going")
+## Phase 7: owner and commissioner roles (built; one older gate failing; started 2026-10-12 on the user's "keep going")
 
 Gate: any role human or AI over a 50-season run on 5 seeds, no runaway payrolls or insolvent teams.
 
@@ -174,11 +175,11 @@ Design (decided)
 - Old saves load: new fields have serde defaults.
 
 - [x] World: stadium, attendance, gate in `settle`; owner/commissioner commands and events; restore validation; 7 tests (`crates/world/tests/economy.rs`)
-- [ ] Agents (`connect`): owner agent sets price, builds, stance; GM reads stance; commissioner agent adjusts rules; wired in the driver
-- [ ] Host + protocol: person may also be owner and/or commissioner; requests, views, advance gating
-- [ ] UI: owner screen, commissioner screen
-- [ ] Gate: 50 seasons x 5 seeds x role mixes (AI, scripted human incl. adversarial policies); no runaway payroll, no insolvency
-- [ ] Re-run Phase 3/4 gates that depend on the economy (stability, ladder, manager); reviewer; log
+- [x] Agents (`connect`): owner agent sets price, builds, stance; GM reads stance; commissioner agent adjusts rules; wired in the driver
+- [x] Host + protocol: person may also be owner and/or commissioner; requests, views, advance gating
+- [x] UI: owner screen (not yet played by a person), commissioner screen
+- [x] Gate (`cargo test --release -p connect --test roles_gate -- --ignored --nocapture`): 50 seasons x 5 seeds x role mixes (AI, scripted human incl. adversarial policies); no runaway payroll, no insolvency
+- [x] Re-run older gates: stability PASS, manager edge +0.0083 (z 5.4) PASS after a harness fix (reads the SeasonPlayed event, not events[0]). Ladder hoarder FAILS (see FAILING GATES). Final reviewer round: see Log.
 
 ## Draft bands (Phase 3)
 
@@ -196,6 +197,8 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 ## Known gaps
 
 - (2026-10-11, Phase 5) Review notes not fixed: `from_save` ignores the stored calibration id and engine version (a save from another calibration loads silently); AI general managers are rebuilt fresh on load, so play after a load can differ from an uninterrupted game; `start_next_season` runs its AI rounds before it can refuse; `LocalStore::list` does not show a slot that only has `.bak` files; two autosaves in the same second can pick the same slot; slot names collide by case on macOS/Windows. The UI has no graphical test (only compile, clippy, a start-up run and the protocol gate); the Player screen's Back button always goes to Roster.
+
+- (2026-10-12, Phase 7) After a rescue `attendance_prev` is stale for a year; old saves get `Stadium::for_market(1.0)`; the owner desk does not show the lender budget limit; `clamp_budgets` in the host is dead code; the Overview label "Play the playoffs..." shows in Progressed/Settling for office-holders; the roles gate uses `run_year_with` with built-in GMs and managers (no host-level run, no human GM or field manager); the owner and commissioner screens were not played by a person; the UI ballpark amount range 0.1..1000 is a guess; receivership stops at the payroll floor and ignores position minimums (clubs must refill in the offseason; the roles gate checks roster legality, but no unit test plays a rescued club into StartSeason); event logs from before receivership would replay differently (saves are snapshots).
 
 - (2026-10-11) `trading_happens` only prints counts and asserts nothing; with the stronger reference it printed 3 proposed, 0 accepted in one 5-year run. Trade volume needs a real behaviour check (Phase 4b item, "behavior checks against real baseball").
 - (2026-10-11) Runs/team-game in the world runs at about 5.0 vs the DH-equivalent target 4.70 (+7%, inside the +-10% world band).
@@ -230,6 +233,8 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 - Phase 4b ladder caveats (reviewer): the win% gap of a tested club is about 1.25x its true edge (the 24 reference clubs absorb part of it); the standard errors treat seasons as independent although they are autocorrelated, so the stretcher failure (z 2.7) is weak and the hoarder failure (z 9) is robust; preset runs include the warm-up seasons; the preset order is partly caused by `spends_budget` (Rookie never spends leftover budget); the reference was strengthened after the bot results were seen. Review fixes applied: releases of excess players are waived only above the per-kind limit, a trade may not leave a club below 13 majors of a kind, a club may have at most 4 open offers, and a league office fallback signs players for a short club before the season starts (the garbage-agent case).
 
 ## Log
+
+- **Phase 7 (2026-10-12)**: stadium, gate and ticket price; owner levers (budget, ticket, ballpark, stance) and commissioner rules (10% a year, once a year); lender budget limit; rescue at settlement now also voids contracts above the payroll floor; built-in owner and commissioner agents; host roles and views; owner and commissioner screens. Roles gate (5 seeds x 6 mixes x 50 seasons) PASS; manager gate +0.0083 (z 5.4); stability PASS; hoarder ladder gate FAILING (see FAILING GATES). A first receivership at StartSeason left illegal rosters and failed the roles gate, so it applies at settlement only.
 
 - **Step 1 close-out (2026-10-11)**:
   - *Exploit bots (1a)*: two root causes found by measurement and fixed in the built-in/reference GM, no thresholds changed. (1) The reference left depth unfilled; injuries pull replacements from Triple-A, so the hoarder (best-now at any price, up to 60 per kind) won on depth. `ReferenceGm` now also upgrades the 24th man of each kind with leftover budget. (2) The market asks the same salary whatever the length, so a long deal for a player still improving is surplus; the stretcher won by forcing 7 years. `Seen::sign_years` (7 years up to age 25, at least 5 at 26-27, else the market's ask) is used by the built-in GM step. The exploit test now uses 5 seeds and season-clustered standard errors (one mean per league run, because seasons within a run are autocorrelated). Final (seasons 26-50, 5 seeds): hoarder -0.027 (z -3.2), tanker -0.155, stretcher -0.008 (z -2.2), trade spammer -0.020. Presets: Rookie -0.096, Veteran -0.048, All-Star +0.017, Hall of Fame +0.036 (HoF vs reference z 10.9; HoF minus Rookie z 24.8). Manager gate still passes (edge +0.0058, z 3.65).

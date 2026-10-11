@@ -369,6 +369,7 @@ impl World {
                 if *year != self.year || clubs.len() != self.clubs.len() {
                     return invalid("finances do not match the world");
                 }
+                let mut rescued = Vec::new();
                 for (i, (fin, st)) in clubs.iter().enumerate() {
                     let ClubFinanceState {
                         cash,
@@ -388,8 +389,12 @@ impl World {
                         c.stadium.ticket = crate::state::TICKET_REF;
                         c.stance = crate::state::Stance::Balanced;
                         c.budget = c.budget.min(self.rules.payroll_floor);
+                        rescued.push(i);
                     }
                     self.finances[i].push(fin.clone());
+                }
+                for i in rescued {
+                    self.receivership(i);
                 }
                 self.phase = Phase::Offseason;
                 Ok(())
@@ -781,5 +786,35 @@ fn owner_window(w: &World) -> Result<(), WorldError> {
         Ok(())
     } else {
         Err(WorldError::Phase(w.phase))
+    }
+}
+
+impl World {
+    /// A rescued club does not keep the payroll that broke it: the league
+    /// voids its dearest contracts, best paid first, until the payroll is
+    /// back at the floor. The players go to free agency and the club owes
+    /// nothing more on those deals.
+    fn receivership(&mut self, team: usize) {
+        let floor = self.rules.payroll_floor;
+        let mut paid: Vec<(f64, PlayerId)> = self.clubs[team]
+            .players
+            .iter()
+            .filter_map(|id| Some((self.players.get(id)?.contract?.salary, *id)))
+            .collect();
+        paid.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut payroll: f64 = paid.iter().map(|(s, _)| s).sum();
+        for (salary, id) in paid {
+            if payroll <= floor {
+                break;
+            }
+            payroll -= salary;
+            self.clubs[team].players.remove(&id);
+            if let Some(p) = self.players.get_mut(&id) {
+                p.team = None;
+                p.contract = None;
+                p.free_years = 0;
+            }
+            self.free_agents.insert(id);
+        }
     }
 }

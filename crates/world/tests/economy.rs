@@ -271,3 +271,29 @@ fn rules_change_at_most_once_a_year() {
     let snap = w.snapshot();
     assert_eq!(snap.rules_set, Some(w.year));
 }
+
+#[test]
+fn a_rescued_club_loses_the_contracts_that_broke_it() {
+    let mut w = founded(7);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::PlaySeason).unwrap();
+    w.execute(&c, Command::PlayPlayoffs).unwrap();
+    // Far below the credit line, so settlement must rescue club 0.
+    w.clubs[0].cash = -10.0 * CREDIT;
+    let others: Vec<f64> = (1..w.clubs.len()).map(|t| w.payroll(t)).collect();
+    let before = w.payroll(0);
+    assert!(
+        before > w.rules.payroll_floor,
+        "test needs a payroll to cut"
+    );
+    w.execute(&c, Command::SettleFinances).unwrap();
+    assert!(w.finances[0][0].rescued);
+    assert!(w.payroll(0) <= w.rules.payroll_floor + 1e-9);
+    assert!(w.payroll(0) < before);
+    // The voided players are free agents, nobody else is touched.
+    for (t, p) in others.iter().enumerate() {
+        assert!((w.payroll(t + 1) - p).abs() < 1e-9);
+    }
+    let again = World::restore(GameParams::reference(), Model::generic(), w.snapshot());
+    assert!(again.is_ok(), "{:?}", again.err());
+}

@@ -301,10 +301,24 @@ fn mechanism() {
         let mut log = Vec::new();
         start_with(&mut w, &mut seats, &mut log).unwrap();
         let (mut pay, mut bud, mut cash, mut n) = (0.0, 0.0, 0.0, 0.0);
-        for y in 0..25 {
+        let (mut wt, mut wr) = (0.0, 0.0);
+        let (mut rev, mut oth) = (0.0, 0.0);
+        for y in 0..50 {
             run_year_with(&mut w, &mut seats, &mut log).unwrap();
-            if y >= 10 {
+            if y >= 25 {
+                for t in 0..30 {
+                    let r = &w.last_records[t];
+                    let p = f64::from(r.w) / f64::from(r.w + r.l);
+                    if tested(t as u8) {
+                        wt += p / 6.0;
+                    } else {
+                        wr += p / 24.0;
+                    }
+                }
                 for t in (0..30).filter(|t| tested(*t as u8)) {
+                    let f = w.finances[t].last().unwrap();
+                    rev += f.revenue;
+                    oth += f.other;
                     pay += w.payroll(t);
                     bud += w.clubs[t].budget;
                     cash += w.clubs[t].cash;
@@ -312,11 +326,23 @@ fn mechanism() {
                 }
             }
         }
+        let rescues = |f: fn(u8) -> bool| {
+            log.iter()
+                .filter(|e| matches!(e, world::command::Event::ClubRescued { team } if f(*team)))
+                .count()
+        };
         println!(
-            "{name}: payroll {:.1} budget {:.1} cash {:.1}",
+            "{name}: rescues tested {} others {}",
+            rescues(tested),
+            rescues(|t| !tested(t))
+        );
+        println!(
+            "{name}: payroll {:.1} budget {:.1} cash {:.1} edge {:+.4}",
             pay / n,
             bud / n,
-            cash / n
+            cash / n,
+            (wt - wr) / 25.0
         );
+        println!("{name}: revenue {:.1} other {:.1}", rev / n, oth / n);
     }
 }

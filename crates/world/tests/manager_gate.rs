@@ -49,12 +49,15 @@ fn win_pcts(w: &World, use_tables: impl Fn(usize) -> bool) -> Vec<f64> {
     let events = w
         .execute(&Actor::commissioner(), Command::PlaySeason)
         .expect("season");
-    match &events[0] {
-        Event::SeasonPlayed { records, .. } => records
+    match events
+        .iter()
+        .find(|e| matches!(e, Event::SeasonPlayed { .. }))
+    {
+        Some(Event::SeasonPlayed { records, .. }) => records
             .iter()
             .map(|r| f64::from(r.w) / f64::from(r.w + r.l))
             .collect(),
-        e => panic!("unexpected {e:?}"),
+        _ => panic!("no SeasonPlayed event in {} events", events.len()),
     }
 }
 
