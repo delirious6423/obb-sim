@@ -214,3 +214,265 @@ fn free_agents_cannot_be_signed_below_their_asking_price() {
         Err(e) => assert!(format!("{e}").contains("budget") || format!("{e}").contains("cap")),
     }
 }
+
+fn gm(team: u8) -> Actor {
+    Actor::gm(protocol::TeamId(u32::from(team)))
+}
+
+fn to_progressed(seed: u64) -> (World, Vec<Event>) {
+    let mut w = founded(seed);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::PlaySeason).unwrap();
+    w.execute(&c, Command::PlayPlayoffs).unwrap();
+    w.execute(&c, Command::SettleFinances).unwrap();
+    let ev = w.execute(&c, Command::ProgressPlayers).unwrap();
+    (w, ev)
+}
+
+#[test]
+fn progression_retires_players_and_expires_contracts() {
+    let mut w = founded(21);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::PlaySeason).unwrap();
+    w.execute(&c, Command::PlayPlayoffs).unwrap();
+    w.execute(&c, Command::SettleFinances).unwrap();
+    let before = w.clone();
+    let ev = w.execute(&c, Command::ProgressPlayers).unwrap();
+    let Event::PlayersProgressed { updates, .. } = &ev[0] else {
+        panic!("expected progression");
+    };
+    use world::command::Outcome;
+    let retired: Vec<_> = updates
+        .iter()
+        .filter(|u| u.outcome == Outcome::Retired)
+        .collect();
+    let expired: Vec<_> = updates
+        .iter()
+        .filter(|u| u.outcome == Outcome::Expired)
+        .collect();
+    assert!(!retired.is_empty(), "somebody retires in a league of 3,000");
+    assert!(!expired.is_empty(), "some contracts run out");
+    for u in &retired {
+        assert!(!w.players.contains_key(&u.player));
+        assert!(w.retired.contains_key(&u.player));
+        assert!(!w.free_agents.contains(&u.player));
+        assert!(w.clubs.iter().all(|c| !c.players.contains(&u.player)));
+    }
+    for u in &expired {
+        let p = &w.players[&u.player];
+        assert!(p.team.is_none() && p.contract.is_none());
+        assert!(w.free_agents.contains(&u.player));
+        assert!(w.clubs.iter().all(|c| !c.players.contains(&u.player)));
+        assert_eq!(before.players[&u.player].contract.unwrap().years, 1);
+    }
+    // Everyone else is a year older with a year less on the contract.
+    for u in updates.iter().filter(|u| u.outcome == Outcome::Stays) {
+        if let (Some(old), Some(new)) = (
+            before.players[&u.player].contract,
+            w.players[&u.player].contract,
+        ) {
+            assert_eq!(new.years, old.years - 1);
+            assert_eq!(new.salary, old.salary);
+        }
+    }
+}
+
+#[test]
+fn releasing_a_player_pays_off_the_contract() {
+    let (mut w, _) = to_progressed(22);
+    let (team, id, owed) = w
+        .players
+        .values()
+        .filter_map(|p| {
+            Some((
+                p.team?,
+                p.id,
+                p.contract.map(|c| c.salary * f64::from(c.years))?,
+            ))
+        })
+        .filter(|(t, _, owed)| *owed < w.clubs[usize::from(*t)].cash + world::state::CREDIT)
+        .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+        .unwrap();
+    assert!(owed > 1.0);
+    let cash = w.clubs[usize::from(team)].cash;
+    let payroll = w.payroll(usize::from(team));
+    let ev = w
+        .execute(&gm(team), Command::ReleasePlayer { team, player: id })
+        .unwrap();
+    assert!(matches!(ev[0], Event::PlayerReleased { .. }));
+    let c = &w.clubs[usize::from(team)];
+    assert!((cash - c.cash - owed).abs() < 1e-9);
+    assert!((c.spent - owed).abs() < 1e-9);
+    assert!(w.payroll(usize::from(team)) < payroll);
+    assert!(w.free_agents.contains(&id));
+    assert!(w.players[&id].team.is_none());
+}
+
+#[test]
+fn a_club_cannot_spend_below_its_credit_line() {
+    let (mut w, _) = to_progressed(23);
+    let (team, id) = w
+        .players
+        .values()
+        .filter(|p| {
+            p.team.is_some()
+                && p.contract
+                    .is_some_and(|c| c.salary * f64::from(c.years) > 2.0)
+        })
+        .map(|p| (p.team.unwrap(), p.id))
+        .next()
+        .unwrap();
+    w.clubs[usize::from(team)].cash = -world::state::CREDIT;
+    let before = w.clone();
+    let err = w
+        .execute(&gm(team), Command::ReleasePlayer { team, player: id })
+        .unwrap_err();
+    assert!(format!("{err}").contains("afford"), "{err}");
+    assert!(w == before);
+}
+
+#[test]
+fn levels_change_only_for_players_on_the_club_and_roster_limits_hold() {
+    let (mut w, _) = to_progressed(24);
+    let c = Actor::commissioner();
+    let on0: Vec<_> = w.clubs[0].players.iter().copied().collect();
+    let on1 = *w.clubs[1].players.iter().next().unwrap();
+    // Another club's player cannot be moved.
+    assert!(
+        w.execute(
+            &gm(0),
+            Command::SetLevel {
+                team: 0,
+                player: on1,
+                level: world::player::Level::Single
+            }
+        )
+        .is_err()
+    );
+    // A player on the club can.
+    let p = on0
+        .iter()
+        .find(|id| w.players[*id].level == world::player::Level::Majors)
+        .copied()
+        .unwrap();
+    w.execute(
+        &gm(0),
+        Command::SetLevel {
+            team: 0,
+            player: p,
+            level: world::player::Level::Single,
+        },
+    )
+    .unwrap();
+    assert_eq!(w.players[&p].level, world::player::Level::Single);
+    // Skipping the draft and free agency would leave 12 in the majors: the
+    // season cannot start, and a refused start changes nothing.
+    w.execute(&c, Command::OpenDraft).unwrap();
+    while let Some(d) = &w.draft {
+        let Some(&t) = d.order.get(d.next) else { break };
+        w.execute(&gm(t), Command::PassPick { team: t }).unwrap();
+    }
+    w.execute(&c, Command::CloseDraft).unwrap();
+    let before = w.clone();
+    assert!(w.execute(&c, Command::StartSeason).is_err());
+    assert!(w == before);
+    // Too many at one minor-league level is refused as well.
+    for id in &on0 {
+        w.execute(
+            &gm(0),
+            Command::SetLevel {
+                team: 0,
+                player: *id,
+                level: world::player::Level::Double,
+            },
+        )
+        .unwrap();
+    }
+    let err = w.execute(&c, Command::StartSeason).unwrap_err();
+    assert!(format!("{err}").contains("club 0"), "{err}");
+}
+
+#[test]
+fn drafting_signs_a_player_and_an_unaffordable_demand_walks_away() {
+    let (mut w, _) = to_progressed(25);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::OpenDraft).unwrap();
+    // The agent's pick signs a drafted amateur to a club contract.
+    let team = w.draft.as_ref().unwrap().order[0];
+    let cmd = world::agents::draft_pick(&world::agents::GmView::new(&w, team)).unwrap();
+    let Command::DraftPlayer { player, .. } = cmd else {
+        panic!("expected a pick")
+    };
+    let ev = w.execute(&gm(team), cmd).unwrap();
+    assert!(matches!(ev[0], Event::PlayerDrafted { bonus: Some(_), .. }));
+    assert_eq!(w.players[&player].team, Some(team));
+    assert_eq!(w.players[&player].drafted.unwrap().pick, 1);
+    // Late in the draft a prospect asking for more than the slot refuses.
+    while let Some(d) = &w.draft {
+        if d.next >= 250 {
+            break;
+        }
+        let t = d.order[d.next];
+        w.execute(&gm(t), Command::PassPick { team: t }).unwrap();
+    }
+    let d = w.draft.clone().unwrap();
+    let t = d.order[d.next];
+    let slot = world::player::slot_bonus((d.next + 1) as u16);
+    let greedy = d
+        .remaining
+        .iter()
+        .find(|id| {
+            let p = &w.players[*id];
+            p.origin != world::player::Origin::International
+                && world::scout::amateur_demand(&w, p) > 1.5 * slot
+        })
+        .copied()
+        .expect("some prospect asks too much for a late pick");
+    let ev = w
+        .execute(
+            &gm(t),
+            Command::DraftPlayer {
+                team: t,
+                player: greedy,
+            },
+        )
+        .unwrap();
+    assert!(matches!(ev[0], Event::PlayerDrafted { bonus: None, .. }));
+    assert!(w.retired.contains_key(&greedy));
+    assert!(!w.players.contains_key(&greedy));
+}
+
+#[test]
+fn replaying_refuses_events_that_do_not_fit() {
+    let (mut w, _) = to_progressed(26);
+    let before = w.clone();
+    let bad_order = Event::DraftOpened {
+        year: w.year,
+        prospects: vec![],
+        order: vec![200],
+        amateur_picks: 1,
+        next_player: w.next_player,
+    };
+    assert!(w.apply(&bad_order).is_err());
+    let reused_id = Event::DraftOpened {
+        year: w.year,
+        prospects: vec![w.players.values().next().unwrap().clone()],
+        order: vec![0],
+        amateur_picks: 1,
+        next_player: w.next_player,
+    };
+    assert!(w.apply(&reused_id).is_err());
+    let budget = Event::BudgetSet {
+        team: 0,
+        payroll: f64::NAN,
+    };
+    assert!(w.apply(&budget).is_err());
+    assert!(w == before);
+    let mut fresh_world = fresh(1);
+    let bad = Event::PlayoffsPlayed {
+        year: 2030,
+        series: vec![],
+        champion: 99,
+    };
+    assert!(fresh_world.apply(&bad).is_err());
+}

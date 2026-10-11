@@ -11,7 +11,7 @@ use crate::player::{
 };
 use crate::rating::{Model, normal, uniform};
 use crate::scout::asking_salary;
-use crate::state::{ClubState, Finance, MIN_SALARY, Phase, Rules, TEAMS, World};
+use crate::state::{CREDIT, ClubState, Finance, MIN_SALARY, Phase, Rules, TEAMS, World};
 use crate::util::{stream, tag};
 
 const YEAR_ZERO: i32 = 2030;
@@ -210,7 +210,13 @@ impl World {
                 } else {
                     slot_bonus((d.next + 1) as u16)
                 };
-                let bonus = (p.demand <= 1.5 * slot).then_some(p.demand.max(0.1));
+                let demand = crate::scout::amateur_demand(self, p);
+                let bonus = (demand <= 1.5 * slot).then_some(demand.max(0.1));
+                if let Some(b) = bonus
+                    && self.clubs[usize::from(*team)].cash - b < -CREDIT
+                {
+                    return Err(WorldError::Invalid("club cannot afford the bonus".into()));
+                }
                 Ok(vec![Event::PlayerDrafted {
                     pick: d.next,
                     team: *team,
@@ -272,8 +278,15 @@ impl World {
             }
             Command::ReleasePlayer { team, player } => {
                 self.check_team(*team)?;
-                self.player(*player)
+                let p = self
+                    .player(*player)
                     .ok_or(WorldError::UnknownPlayer(*player))?;
+                let owed = p.contract.map_or(0.0, |c| c.salary * f64::from(c.years));
+                if self.clubs[usize::from(*team)].cash - owed < -CREDIT {
+                    return Err(WorldError::Invalid(
+                        "club cannot afford to pay off the contract".into(),
+                    ));
+                }
                 Ok(vec![Event::PlayerReleased {
                     team: *team,
                     player: *player,
@@ -334,6 +347,7 @@ impl World {
                     revenue,
                     payroll,
                     other,
+                    spent: self.clubs[i].spent,
                     dividend,
                 },
                 ClubFinanceState {
@@ -361,7 +375,7 @@ impl World {
             // Young players' development is much less predictable.
             let age_now = p.age(year);
             let youth = (f64::from(26 - age_now) / 8.0).clamp(0.0, 1.0);
-            let luck = (0.06 + 0.22 * youth) * normal(&mut rng);
+            let luck = (0.06 + 0.55 * youth) * normal(&mut rng);
             let retire_roll = uniform(&mut rng);
             let drift = (p.drift + p.pending_loss + luck).clamp(-1.5, 3.0);
             let mut aged = p.clone();
@@ -479,6 +493,7 @@ impl World {
                     cash: 0.2 * expected,
                     budget: 0.0,
                     revenue_prev: expected,
+                    spent: 0.0,
                     hype: 1.0,
                     win_pct_prev: 0.5,
                     players: Default::default(),

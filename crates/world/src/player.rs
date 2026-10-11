@@ -105,8 +105,6 @@ pub struct Player {
     pub team: Option<u8>,
     pub level: Level,
     pub contract: Option<Contract>,
-    /// Asking signing bonus in millions (amateurs).
-    pub demand: f64,
     pub out_games: u16,
     /// Damage from injuries this season, applied at the next progression.
     pub pending_loss: f64,
@@ -163,8 +161,8 @@ pub struct Pool {
 
 pub const DEFAULT_POOL: Pool = Pool {
     spread: 1.3,
-    offset: 2.2,
-    offset_pitcher: 2.0,
+    offset: 2.5,
+    offset_pitcher: 2.4,
 };
 
 const ONSETS: &[&str] = &[
@@ -242,7 +240,6 @@ pub fn prospect<R: RngCore>(
         team: None,
         level: Level::Single,
         contract: None,
-        demand: 0.0,
         out_games: 0,
         pending_loss: 0.0,
         free_years: 0,
@@ -253,13 +250,5 @@ pub fn prospect<R: RngCore>(
     let (z, q) = talent_at(model, &p, year - born);
     p.z = z;
     p.quality = q;
-    // The market's view of his ceiling sets what he asks to sign.
-    let ceiling = (p.peak_quality / model.quality_sd(kind) / pool.spread.max(1.0)).clamp(-3.0, 4.0);
-    let premium = if origin == Origin::HighSchool {
-        1.3
-    } else {
-        1.0
-    };
-    p.demand = (0.15 * libm::exp(0.9 * ceiling + 0.3 * normal(rng)) * premium).clamp(0.1, 8.0);
     p
 }

@@ -1,21 +1,20 @@
-//! Phase 3 exit gate. Ignored by default (needs the git-ignored
-//! `data/internal/params.json`, and takes a few minutes):
+//! Phase 3 exit gates. Ignored by default (they need the git-ignored
+//! `data/internal/params.json` and take a minute):
 //!
 //!     cargo test --release -p world --test world_gate -- --ignored --nocapture
 //!
-//! Fifty seasons with fixed-behaviour owners and GMs must show
-//!  * no talent inflation or collapse: league K%, BB%, HR% and runs per
-//!    team-game stay near the real league and do not drift between the first
-//!    and last decade, and the average major leaguer stays near league average;
-//!  * no insolvent club;
-//!  * draft-slot value curves in the real-world range: chance of reaching the
-//!    majors, career WAR and bust rate by pick bucket.
+//! `stability_gate`: for each of five seeds, fifty seasons with fixed-behaviour
+//! owners and GMs must show no talent inflation or collapse (league K%, BB%,
+//! HR% and runs per team-game near the real league and without drift between
+//! the first and last decade; the average major leaguer stays near league
+//! average) and no insolvent club. Every seed must pass.
 //!
-//! The bands below were fixed before the first run of this gate. The draft
-//! bands are rough ranges from general knowledge of published draft studies
-//! (no data was downloaded for them); they are assumptions, listed under
-//! "Known gaps" in PLAN.md.
+//! `draft_gate`: draft-slot value curves against published studies (sources,
+//! definitions and ranges are in PLAN.md, "Draft bands"). Every seed must pass.
+//!
+//! Bands are never edited to make a run pass; a change needs a cited source.
 
+use std::ops::RangeInclusive;
 use std::path::Path;
 
 use calibration::Calibration;
@@ -27,8 +26,8 @@ use world::rating::{Kind, Model};
 use world::state::World;
 
 const SEASONS: usize = 50;
-const BURN_IN: u8 = 12;
-const SEED: u64 = 20_250_101;
+const BURN_IN: u8 = 30;
+const SEEDS: [u64; 5] = [20_250_101, 1, 2, 3, 4];
 
 /// Season means in the 50-season mean must be within this of the real league.
 const RATE_BAND: f64 = 0.15;
@@ -49,68 +48,34 @@ struct Season {
     q: [f64; 2],
 }
 
+/// A drafted amateur (not international) who has played out his career.
+struct Draftee {
+    pick: u16,
+    signed: bool,
+    reached: bool,
+    war: f64,
+    seasons: u16,
+}
+
+struct Run {
+    seasons: Vec<Season>,
+    lowest_cash: f64,
+    draftees: Vec<Draftee>,
+}
+
 fn mean<T>(v: &[T], f: impl Fn(&T) -> f64) -> f64 {
     v.iter().map(f).sum::<f64>() / v.len() as f64
 }
 
-struct Bucket {
-    name: &'static str,
-    picks: std::ops::RangeInclusive<u16>,
-    debut: (f64, f64),
-    war: (f64, f64),
-    bust_max: Option<f64>,
-    bust_min: Option<f64>,
-}
-
-const BUCKETS: [Bucket; 4] = [
-    Bucket {
-        name: "picks 1-10",
-        picks: 1..=10,
-        debut: (0.60, 0.95),
-        war: (6.0, 30.0),
-        bust_max: Some(0.45),
-        bust_min: None,
-    },
-    Bucket {
-        name: "picks 11-30",
-        picks: 11..=30,
-        debut: (0.40, 0.80),
-        war: (2.0, 15.0),
-        bust_max: None,
-        bust_min: None,
-    },
-    Bucket {
-        name: "picks 31-90",
-        picks: 31..=90,
-        debut: (0.20, 0.60),
-        war: (0.5, 7.0),
-        bust_max: None,
-        bust_min: None,
-    },
-    Bucket {
-        name: "picks 91-300",
-        picks: 91..=300,
-        debut: (0.03, 0.35),
-        war: (0.0, 3.0),
-        bust_max: None,
-        bust_min: Some(0.75),
-    },
-];
-
-#[test]
-#[ignore = "needs data/internal/params.json; run with --release -- --ignored"]
-fn world_gate() {
-    let cal = Calibration::load(
+fn calibration() -> Calibration {
+    Calibration::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/internal/params.json"),
     )
-    .unwrap_or_else(|e| panic!("{e}"));
-    let league = cal.params.league.0;
-    let runs_target = cal.run_environment.runs_per_team_game_dh;
-    let model = Model::from_calibration(&cal);
-    let seed = std::env::var("GATE_SEED")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(SEED);
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+fn simulate(cal: &Calibration, seed: u64) -> Run {
+    let model = Model::from_calibration(cal);
     let mut w = World::new(seed, cal.params, model, DEFAULT_POOL);
     w.execute(
         &Actor::commissioner(),
@@ -144,136 +109,239 @@ fn world_gate() {
             q: [q[0] / n[0], q[1] / n[1]],
         });
     }
-
-    let all = |f: fn(&Season) -> f64| mean(&seasons, f);
-    let decade = |range: std::ops::Range<usize>, f: fn(&Season) -> f64| mean(&seasons[range], f);
-    let mut failures: Vec<String> = Vec::new();
-    let mut check = |name: &str, value: f64, lo: f64, hi: f64| {
-        let ok = (lo..=hi).contains(&value);
-        println!(
-            "{name:<44} {value:>9.4}  [{lo:.4}, {hi:.4}]  {}",
-            if ok { "PASS" } else { "FAIL" }
-        );
-        if !ok {
-            failures.push(format!("{name}: {value:.4} outside [{lo:.4}, {hi:.4}]"));
-        }
-    };
-
-    println!("{SEASONS} seasons from {first_year}");
-    let rates: [(&str, Metric, f64); 3] = [
-        ("K%", |s| s.k, league[0]),
-        ("BB%", |s| s.bb, league[1]),
-        ("HR/PA", |s| s.hr, league[6]),
-    ];
-    for (name, f, target) in rates {
-        let m = all(f);
-        check(
-            &format!("{name} mean vs real"),
-            m,
-            target * (1.0 - RATE_BAND),
-            target * (1.0 + RATE_BAND),
-        );
-        let (a, b) = (decade(0..10, f), decade(SEASONS - 10..SEASONS, f));
-        check(
-            &format!("{name} last decade / first decade"),
-            b / a,
-            1.0 - DRIFT_RATE,
-            1.0 + DRIFT_RATE,
-        );
-    }
-    check(
-        "runs/team-game mean vs real",
-        all(|s| s.runs),
-        runs_target * (1.0 - RUNS_BAND),
-        runs_target * (1.0 + RUNS_BAND),
-    );
-    let (a, b) = (
-        decade(0..10, |s| s.runs),
-        decade(SEASONS - 10..SEASONS, |s| s.runs),
-    );
-    check(
-        "runs last decade / first decade",
-        b / a,
-        1.0 - DRIFT_RUNS,
-        1.0 + DRIFT_RUNS,
-    );
-    for (i, name) in ["batter", "pitcher"].into_iter().enumerate() {
-        let get = move |s: &Season| s.q[i];
-        let (a, b) = (
-            mean(&seasons[0..10], get),
-            mean(&seasons[SEASONS - 10..], get),
-        );
-        check(
-            &format!("major-league {name} quality drift (sd)"),
-            b - a,
-            -DRIFT_QUALITY_SD,
-            DRIFT_QUALITY_SD,
-        );
-        for (j, s) in seasons.iter().enumerate() {
-            if s.q[i].abs() > QUALITY_BAND_SD || j % 10 == 0 {
-                check(
-                    &format!("{name} quality, season {j} (sd)"),
-                    s.q[i],
-                    -QUALITY_BAND_SD,
-                    QUALITY_BAND_SD,
-                );
-            }
-        }
-    }
-    check(
-        "lowest club cash, ever (millions)",
-        lowest_cash,
-        0.0,
-        f64::MAX,
-    );
-
-    // Draft classes old enough to have played out their careers.
-    let mut people = Vec::new();
-    for p in w.players.values().chain(w.retired.values().map(|(p, _)| p)) {
+    // Classes old enough to have played out their careers. A player who
+    // refused to sign left the game in his draft year.
+    let mut draftees = Vec::new();
+    let retired = w.retired.values().map(|(p, y)| (p, Some(*y)));
+    for (p, left) in w.players.values().map(|p| (p, None)).chain(retired) {
         let Some(d) = p.drafted else { continue };
         if p.origin == Origin::International || d.pick > 300 {
             continue;
         }
         if d.year > first_year && d.year <= w.year - 15 {
-            people.push((d.pick, p.career.seasons > 0, p.career.war));
+            draftees.push(Draftee {
+                pick: d.pick,
+                signed: left != Some(d.year),
+                reached: p.career.seasons > 0,
+                war: p.career.war,
+                seasons: p.career.seasons,
+            });
         }
     }
-    println!("{} drafted players measured", people.len());
-    let mut last = (1.0, f64::MAX);
-    for b in &BUCKETS {
-        let here: Vec<_> = people.iter().filter(|p| b.picks.contains(&p.0)).collect();
-        assert!(!here.is_empty(), "{} has no players", b.name);
-        let n = here.len() as f64;
-        let debut = here.iter().filter(|p| p.1).count() as f64 / n;
-        let war = here.iter().map(|p| p.2).sum::<f64>() / n;
-        let bust = here.iter().filter(|p| !p.1 || p.2 <= 0.0).count() as f64 / n;
-        check(
-            &format!("{} reach the majors", b.name),
-            debut,
-            b.debut.0,
-            b.debut.1,
+    Run {
+        seasons,
+        lowest_cash,
+        draftees,
+    }
+}
+
+struct Checker {
+    failures: Vec<String>,
+}
+
+impl Checker {
+    fn check(&mut self, label: &str, name: &str, value: f64, lo: f64, hi: f64) {
+        let ok = (lo..=hi).contains(&value);
+        println!(
+            "{label:<9} {name:<44} {value:>9.4}  [{lo:.4}, {hi:.4}]  {}",
+            if ok { "PASS" } else { "FAIL" }
         );
-        check(
-            &format!("{} mean career WAR", b.name),
-            war,
-            b.war.0,
-            b.war.1,
+        if !ok {
+            self.failures.push(format!(
+                "{label}: {name}: {value:.4} outside [{lo:.4}, {hi:.4}]"
+            ));
+        }
+    }
+
+    fn finish(self, what: &str) {
+        assert!(
+            self.failures.is_empty(),
+            "{what} failed:\n{}",
+            self.failures.join("\n")
         );
-        check(
-            &format!("{} bust rate", b.name),
-            bust,
-            b.bust_min.unwrap_or(0.0),
-            b.bust_max.unwrap_or(1.0),
+    }
+}
+
+#[test]
+#[ignore = "needs data/internal/params.json; run with --release -- --ignored"]
+fn stability_gate() {
+    let cal = calibration();
+    let league = cal.params.league.0;
+    let runs_target = cal.run_environment.runs_per_team_game_dh;
+    let mut c = Checker { failures: vec![] };
+    for seed in SEEDS {
+        let label = format!("seed {seed}");
+        let label = label.as_str();
+        let run = simulate(&cal, seed);
+        let s = &run.seasons;
+        let all = |f: Metric| mean(s, f);
+        let decade = |r: std::ops::Range<usize>, f: Metric| mean(&s[r], f);
+        let rates: [(&str, Metric, f64); 3] = [
+            ("K%", |s| s.k, league[0]),
+            ("BB%", |s| s.bb, league[1]),
+            ("HR/PA", |s| s.hr, league[6]),
+        ];
+        for (name, f, target) in rates {
+            c.check(
+                label,
+                &format!("{name} mean vs real"),
+                all(f),
+                target * (1.0 - RATE_BAND),
+                target * (1.0 + RATE_BAND),
+            );
+            let ratio = decade(SEASONS - 10..SEASONS, f) / decade(0..10, f);
+            c.check(
+                label,
+                &format!("{name} last decade / first"),
+                ratio,
+                1.0 - DRIFT_RATE,
+                1.0 + DRIFT_RATE,
+            );
+        }
+        c.check(
+            label,
+            "runs/team-game mean vs real",
+            all(|s| s.runs),
+            runs_target * (1.0 - RUNS_BAND),
+            runs_target * (1.0 + RUNS_BAND),
         );
-        if debut > last.0 + 1e-9 || war > last.1 + 1e-9 {
-            check(
-                &format!("{} curve is monotone (1 = yes)", b.name),
-                0.0,
+        let ratio = decade(SEASONS - 10..SEASONS, |s| s.runs) / decade(0..10, |s| s.runs);
+        c.check(
+            label,
+            "runs last decade / first",
+            ratio,
+            1.0 - DRIFT_RUNS,
+            1.0 + DRIFT_RUNS,
+        );
+        for (i, name) in ["batter", "pitcher"].into_iter().enumerate() {
+            let get = move |s: &Season| s.q[i];
+            let drift = mean(&s[SEASONS - 10..], get) - mean(&s[0..10], get);
+            c.check(
+                label,
+                &format!("{name} quality drift (sd)"),
+                drift,
+                -DRIFT_QUALITY_SD,
+                DRIFT_QUALITY_SD,
+            );
+            let worst = s
+                .iter()
+                .map(get)
+                .fold(0.0f64, |a, b| if b.abs() > a.abs() { b } else { a });
+            c.check(
+                label,
+                &format!("{name} quality, worst season (sd)"),
+                worst,
+                -QUALITY_BAND_SD,
+                QUALITY_BAND_SD,
+            );
+        }
+        c.check(
+            label,
+            "lowest club cash, ever",
+            run.lowest_cash,
+            0.0,
+            f64::MAX,
+        );
+    }
+    c.finish("stability gate");
+}
+
+struct Bucket {
+    name: &'static str,
+    picks: RangeInclusive<u16>,
+    /// Signed draftees who play at least one major-league game.
+    reach: (f64, f64),
+    /// Mean career WAR per draftee.
+    war: (f64, f64),
+    /// Never reached, or under 1.5 WAR per major-league season.
+    bust: Option<(f64, f64)>,
+}
+
+/// Ranges from published studies; see PLAN.md, "Draft bands".
+const BUCKETS: [Bucket; 4] = [
+    Bucket {
+        name: "picks 1-10",
+        picks: 1..=10,
+        reach: (0.75, 0.87),
+        war: (9.5, 12.8),
+        bust: Some((0.60, 0.65)),
+    },
+    Bucket {
+        name: "picks 11-30",
+        picks: 11..=30,
+        reach: (0.58, 0.82),
+        war: (4.5, 8.7),
+        bust: Some((0.71, 0.85)),
+    },
+    Bucket {
+        name: "picks 31-90",
+        picks: 31..=90,
+        reach: (0.40, 0.51),
+        war: (0.8, 3.3),
+        bust: None,
+    },
+    Bucket {
+        name: "picks 91-300",
+        picks: 91..=300,
+        reach: (0.17, 0.35),
+        // No published source found for these two; kept from the first draft.
+        war: (0.0, 3.0),
+        bust: Some((0.75, 1.0)),
+    },
+];
+
+#[test]
+#[ignore = "needs data/internal/params.json; run with --release -- --ignored"]
+fn draft_gate() {
+    let cal = calibration();
+    let mut c = Checker { failures: vec![] };
+    for seed in SEEDS {
+        let label = format!("seed {seed}");
+        let label = label.as_str();
+        let run = simulate(&cal, seed);
+        let mut last = (1.0, f64::MAX);
+        for b in &BUCKETS {
+            let all: Vec<_> = run
+                .draftees
+                .iter()
+                .filter(|p| b.picks.contains(&p.pick))
+                .collect();
+            assert!(!all.is_empty(), "{} has no players", b.name);
+            let signed: Vec<_> = all.iter().filter(|p| p.signed).collect();
+            let reach = signed.iter().filter(|p| p.reached).count() as f64 / signed.len() as f64;
+            let war = all.iter().map(|p| p.war).sum::<f64>() / all.len() as f64;
+            let bust = signed
+                .iter()
+                .filter(|p| !p.reached || p.war / f64::from(p.seasons) < 1.5)
+                .count() as f64
+                / signed.len() as f64;
+            c.check(
+                label,
+                &format!("{} reach the majors", b.name),
+                reach,
+                b.reach.0,
+                b.reach.1,
+            );
+            c.check(
+                label,
+                &format!("{} mean career WAR", b.name),
+                war,
+                b.war.0,
+                b.war.1,
+            );
+            if let Some((lo, hi)) = b.bust {
+                c.check(label, &format!("{} bust rate", b.name), bust, lo, hi);
+            }
+            let monotone = reach <= last.0 + 1e-9 && war <= last.1 + 1e-9;
+            c.check(
+                label,
+                &format!("{} curve is monotone", b.name),
+                f64::from(u8::from(monotone)),
                 1.0,
                 1.0,
             );
+            last = (reach, war);
         }
-        last = (debut, war);
     }
-    assert!(failures.is_empty(), "gate failed:\n{}", failures.join("\n"));
+    c.finish("draft gate");
 }

@@ -4,7 +4,7 @@
 //! (league seed, club, player, year), so the same club gives the same opinion
 //! all year and different clubs disagree.
 
-use crate::player::{Level, Player};
+use crate::player::{Level, Origin, Player};
 use crate::rating::Kind;
 use crate::state::{MIN_SALARY, World};
 use crate::util::noise;
@@ -45,9 +45,7 @@ pub const SCOUTING: Scouting = Scouting {
     amateur_peak: 1.5,
 };
 
-/// A club's opinion of any player. `club` identifies whose eyes these are.
-#[must_use]
-pub fn opinion(w: &World, club: u8, p: &Player) -> Opinion {
+fn view(w: &World, key: u64, p: &Player) -> Opinion {
     let sdq = w.model.quality_sd(p.kind);
     let amateur =
         p.drafted.is_none() && p.team.is_none() && p.career.seasons == 0 && p.contract.is_none();
@@ -58,13 +56,21 @@ pub fn opinion(w: &World, club: u8, p: &Player) -> Opinion {
         (s, s * 1.5)
     };
     let id = u64::from(p.id.0);
-    let c = u64::from(club);
     let y = w.year as u64;
     Opinion {
-        now: p.quality + sd_now * sdq * noise(w.seed, c, id, y * 2),
-        peak: p.peak_quality + sd_peak * sdq * noise(w.seed, c, id, y * 2 + 1),
+        now: p.quality + sd_now * sdq * noise(w.seed, key, id, y * 2),
+        peak: p.peak_quality + sd_peak * sdq * noise(w.seed, key, id, y * 2 + 1),
     }
 }
+
+/// A club's opinion of any player. `club` identifies whose eyes these are.
+#[must_use]
+pub fn opinion(w: &World, club: u8, p: &Player) -> Opinion {
+    view(w, u64::from(club), p)
+}
+
+/// Club key of the market's consensus view.
+const MARKET_KEY: u64 = 9_999;
 
 /// Expected wins above replacement over a season at quality `q`.
 #[must_use]
@@ -76,11 +82,26 @@ pub fn war_of(kind: Kind, q: f64) -> f64 {
     (q + REPLACEMENT) * volume / 10.0
 }
 
-/// The market's (club-independent) view of a player's current quality.
+/// The market's (club-independent) view of a player's current quality: no
+/// better informed than a scout, so prices never reveal true talent.
 #[must_use]
 pub fn public_quality(w: &World, p: &Player) -> f64 {
+    view(w, MARKET_KEY, p).now
+}
+
+/// Signing bonus an amateur asks (millions), from the market's view of his
+/// ceiling.
+#[must_use]
+pub fn amateur_demand(w: &World, p: &Player) -> f64 {
     let sdq = w.model.quality_sd(p.kind);
-    p.quality + 0.15 * sdq * noise(w.seed, 9_999, u64::from(p.id.0), w.year as u64)
+    let ceiling = (view(w, MARKET_KEY, p).peak / sdq / w.pool.spread.max(1.0)).clamp(-3.0, 4.0);
+    let premium = if p.origin == Origin::HighSchool {
+        1.3
+    } else {
+        1.0
+    };
+    let n = noise(w.seed, MARKET_KEY + 1, u64::from(p.id.0), 0);
+    (0.15 * libm::exp(0.9 * ceiling + 0.3 * n) * premium).clamp(0.1, 8.0)
 }
 
 /// What the market asks per year for a player.

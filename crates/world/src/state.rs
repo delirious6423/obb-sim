@@ -13,6 +13,14 @@ pub const TEAMS: usize = 30;
 pub const MAJORS_PER_KIND: usize = 13;
 pub const MIN_SALARY: f64 = 0.75;
 pub const MINOR_COST: f64 = 0.06;
+/// Players of one kind a club may hold when the season starts, all levels.
+pub const ROSTER_PER_KIND: usize = 49;
+/// Hard limit of one kind on a club at any time (the offseason runs over
+/// the season limit until the GM sets levels).
+pub const ROSTER_MAX_PER_KIND: usize = 60;
+/// How far below zero a club's cash may be pushed by discretionary spending
+/// (bonuses, paying off released contracts).
+pub const CREDIT: f64 = 25.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -66,6 +74,9 @@ pub struct ClubState {
     pub cash: f64,
     pub budget: f64,
     pub revenue_prev: f64,
+    /// Cash already paid since the last settlement for signing bonuses and
+    /// released contracts; shown in the next season's books.
+    pub spent: f64,
     pub hype: f64,
     pub win_pct_prev: f64,
     pub players: BTreeSet<PlayerId>,
@@ -110,6 +121,8 @@ pub struct Finance {
     pub revenue: f64,
     pub payroll: f64,
     pub other: f64,
+    /// Bonuses and released contracts paid during the offseason before.
+    pub spent: f64,
     pub dividend: f64,
 }
 

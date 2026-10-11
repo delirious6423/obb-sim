@@ -2,7 +2,10 @@
 
 use crate::command::{ClubFinanceState, Event, Founding, Line, Outcome, WorldError};
 use crate::player::{Contract, Level, Player, PlayerId};
-use crate::state::{Draft, MAJORS_PER_KIND, MINOR_COST, Phase, SeasonRecord, World};
+use crate::state::{
+    Draft, MAJORS_PER_KIND, MINOR_COST, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, SeasonRecord,
+    World,
+};
 
 fn invalid<T>(msg: impl Into<String>) -> Result<T, WorldError> {
     Err(WorldError::Invalid(msg.into()))
@@ -21,6 +24,21 @@ impl World {
         self.clubs
             .get_mut(usize::from(team))
             .ok_or(WorldError::UnknownClub(team))
+    }
+
+    /// Players of `kind` on a club, optionally at one level.
+    pub(crate) fn kind_count(
+        &self,
+        team: u8,
+        kind: crate::rating::Kind,
+        level: Option<Level>,
+    ) -> usize {
+        self.clubs[usize::from(team)]
+            .players
+            .iter()
+            .filter_map(|id| self.players.get(id))
+            .filter(|p| p.kind == kind && level.is_none_or(|l| p.level == l))
+            .count()
     }
 
     fn player_mut(&mut self, id: PlayerId) -> Result<&mut Player, WorldError> {
@@ -52,9 +70,133 @@ impl World {
         Ok(())
     }
 
-    /// Apply one event. Fails (possibly leaving the world half-changed for
-    /// multi-step events) if the event does not fit.
+    /// Check an event against the world without changing anything, so that
+    /// `apply` never fails half-way through a multi-step event. Never trust
+    /// loaded events.
+    fn validate(&self, e: &Event) -> Result<(), WorldError> {
+        let clubs = self.clubs.len();
+        let club_ok = |t: u8| usize::from(t) < clubs;
+        match e {
+            Event::Founded(f) => {
+                if f.clubs.is_empty() || f.clubs.len() > usize::from(u8::MAX) {
+                    return invalid("a league needs between 1 and 255 clubs");
+                }
+                let mut seen = std::collections::BTreeSet::new();
+                let mut top = 0;
+                for p in &f.players {
+                    if !seen.insert(p.id) {
+                        return invalid("duplicate player id");
+                    }
+                    top = top.max(p.id.0 + 1);
+                    if let Some(t) = p.team
+                        && usize::from(t) >= f.clubs.len()
+                    {
+                        return Err(WorldError::UnknownClub(t));
+                    }
+                }
+                for id in &f.free_agents {
+                    let known = f.players.iter().any(|p| p.id == *id && p.team.is_none());
+                    if !known {
+                        return invalid("free agent is not an unattached player");
+                    }
+                }
+                if f.next_player < top {
+                    return invalid("next player id is already in use");
+                }
+            }
+            Event::SeasonPlayed {
+                lines, injuries, ..
+            } => {
+                for id in lines
+                    .iter()
+                    .map(|l| l.player)
+                    .chain(injuries.iter().map(|i| i.player))
+                {
+                    if !self.players.contains_key(&id) {
+                        return Err(WorldError::UnknownPlayer(id));
+                    }
+                }
+            }
+            Event::PlayoffsPlayed {
+                series, champion, ..
+            } => {
+                if !club_ok(*champion) || series.iter().any(|s| !club_ok(s.a) || !club_ok(s.b)) {
+                    return invalid("playoffs name an unknown club");
+                }
+            }
+            Event::FinancesSettled { clubs: c, .. } => {
+                let finite = |x: f64| x.is_finite();
+                if c.iter().any(|(f, s)| {
+                    !(finite(f.revenue)
+                        && finite(f.payroll)
+                        && finite(f.other)
+                        && finite(f.dividend)
+                        && finite(s.cash)
+                        && finite(s.hype))
+                }) {
+                    return invalid("finances must be finite numbers");
+                }
+            }
+            Event::BudgetSet { team, payroll } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+                if !payroll.is_finite()
+                    || *payroll < self.rules.payroll_floor
+                    || *payroll > self.rules.payroll_cap
+                {
+                    return invalid("budget outside the payroll limits");
+                }
+            }
+            Event::PlayersProgressed { updates, .. } => {
+                let mut seen = std::collections::BTreeSet::new();
+                for u in updates {
+                    let p = self
+                        .players
+                        .get(&u.player)
+                        .ok_or(WorldError::UnknownPlayer(u.player))?;
+                    if !seen.insert(u.player) {
+                        return invalid("player updated twice");
+                    }
+                    if u.outcome == Outcome::Expired && p.team.is_none() {
+                        return invalid("a free agent cannot expire");
+                    }
+                    if !u.drift.is_finite() || !u.quality.is_finite() {
+                        return invalid("progression must be finite");
+                    }
+                }
+            }
+            Event::DraftOpened {
+                prospects,
+                order,
+                amateur_picks,
+                next_player,
+                ..
+            } => {
+                let mut seen = std::collections::BTreeSet::new();
+                for p in prospects {
+                    if self.players.contains_key(&p.id)
+                        || self.retired.contains_key(&p.id)
+                        || !seen.insert(p.id)
+                        || p.id.0 >= *next_player
+                        || p.team.is_some()
+                    {
+                        return invalid("draft class has a bad player id");
+                    }
+                }
+                if *amateur_picks > order.len() || order.iter().any(|t| !club_ok(*t)) {
+                    return invalid("draft order is not valid");
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Apply one event. The event is validated first, so a refused event
+    /// leaves the world untouched.
     pub fn apply(&mut self, e: &Event) -> Result<(), WorldError> {
+        self.validate(e)?;
         match e {
             Event::Founded(f) => self.found(f),
             Event::SeasonPlayed {
@@ -127,6 +269,7 @@ impl World {
                     let c = &mut self.clubs[i];
                     c.cash = cash;
                     c.revenue_prev = revenue_prev;
+                    c.spent = 0.0;
                     c.hype = hype;
                     c.win_pct_prev = win_pct_prev;
                     self.finances[i].push(fin.clone());
@@ -262,6 +405,7 @@ impl World {
                         let c = self.club_mut(*team)?;
                         c.players.insert(*player);
                         c.cash -= *b;
+                        c.spent += *b;
                     }
                     None => {
                         let mut p = self
@@ -310,6 +454,12 @@ impl World {
                 if !self.free_agents.remove(player) {
                     return invalid("player is not a free agent");
                 }
+                let kind = self.player_mut(*player)?.kind;
+                let held = self.kind_count(*team, kind, None);
+                if held >= ROSTER_MAX_PER_KIND {
+                    self.free_agents.insert(*player);
+                    return invalid("club is at the roster limit");
+                }
                 self.club_mut(*team)?.players.insert(*player);
                 let p = self.player_mut(*player)?;
                 p.team = Some(*team);
@@ -336,6 +486,7 @@ impl World {
                 let club = self.club_mut(*team)?;
                 club.players.remove(player);
                 club.cash -= owed;
+                club.spent += owed;
                 let p = self.player_mut(*player)?;
                 p.team = None;
                 p.contract = None;
@@ -366,17 +517,27 @@ impl World {
                 if *year != self.year {
                     return invalid("wrong year");
                 }
-                for (t, c) in self.clubs.iter().enumerate() {
+                for t in 0..self.clubs.len() as u8 {
                     for kind in [crate::rating::Kind::Batter, crate::rating::Kind::Pitcher] {
-                        let n = c
-                            .players
-                            .iter()
-                            .filter_map(|id| self.players.get(id))
-                            .filter(|p| p.kind == kind && p.level == Level::Majors)
-                            .count();
+                        let n = self.kind_count(t, kind, Some(Level::Majors));
                         if n != MAJORS_PER_KIND {
                             return invalid(format!(
                                 "club {t} has {n} {kind:?}s in the majors, needs {MAJORS_PER_KIND}"
+                            ));
+                        }
+                        for level in Level::MINORS {
+                            let n = self.kind_count(t, kind, Some(level));
+                            if n > level.capacity() {
+                                return invalid(format!(
+                                    "club {t} has {n} {kind:?}s at {level:?}, room for {}",
+                                    level.capacity()
+                                ));
+                            }
+                        }
+                        let all = self.kind_count(t, kind, None);
+                        if all > ROSTER_PER_KIND {
+                            return invalid(format!(
+                                "club {t} holds {all} {kind:?}s, limit {ROSTER_PER_KIND}"
                             ));
                         }
                     }

@@ -86,6 +86,11 @@ pub(crate) fn burn_in(w: &mut World, years: u8) {
         }
     }
     for _ in 0..years {
+        // No games are played, so no money comes in: top the clubs up to
+        // their opening cash each year instead.
+        for c in &mut w.clubs {
+            c.cash = 0.2 * (190.0 * c.market + 85.0);
+        }
         offseason(w, &mut Vec::new()).expect("burn-in offseason");
         w.phase = Phase::Offseason;
     }

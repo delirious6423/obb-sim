@@ -7,10 +7,8 @@ use crate::command::Command;
 use crate::player::{Level, Origin, PlayerId, slot_bonus};
 use crate::rating::Kind;
 use crate::scout::{asking_salary, asking_years, opinion, war_of};
-use crate::state::{MAJORS_PER_KIND, MIN_SALARY, Phase, World};
+use crate::state::{CREDIT, MAJORS_PER_KIND, MIN_SALARY, Phase, ROSTER_MAX_PER_KIND, World};
 
-/// Roster spots per kind across all levels.
-pub const ROSTER_PER_KIND: usize = 49;
 /// Bonus ceiling relative to the slot at which a pick will still sign.
 const SIGNABLE: f64 = 1.5;
 /// Quality gain (runs per PA) a free agent must offer over the club's
@@ -33,6 +31,8 @@ pub struct Seen {
     pub ask_years: u8,
     /// Asking signing bonus (amateurs).
     pub demand: f64,
+    /// Salary still owed if released (own players only; zero otherwise).
+    pub owed: f64,
 }
 
 impl Seen {
@@ -92,7 +92,11 @@ impl<'a> GmView<'a> {
             peak: o.peak,
             ask: asking_salary(self.w, p),
             ask_years: asking_years(self.w, p),
-            demand: p.demand,
+            demand: crate::scout::amateur_demand(self.w, p),
+            owed: p
+                .contract
+                .filter(|_| p.team == Some(self.team))
+                .map_or(0.0, |c| c.salary * f64::from(c.years)),
         }
     }
 
@@ -153,7 +157,11 @@ pub fn draft_pick(v: &GmView) -> Option<Command> {
     let mut best: Option<Seen> = None;
     for id in &d.remaining {
         let s = v.see(*id);
-        if (s.origin == Origin::International) != intl || s.demand > ceiling {
+        let cash = v.w.clubs[usize::from(v.team)].cash;
+        if (s.origin == Origin::International) != intl
+            || s.demand > ceiling
+            || cash - s.demand < -CREDIT
+        {
             continue;
         }
         let better = |a: &Seen, b: &Seen| {
@@ -192,6 +200,9 @@ pub fn free_agency_step(v: &GmView) -> Option<Command> {
         let mut mine: Vec<&Seen> = roster.iter().filter(|s| s.kind == kind).collect();
         mine.sort_by(|a, b| by_score_desc(a, b));
         let short = mine.len() < MAJORS_PER_KIND;
+        if mine.len() >= ROSTER_MAX_PER_KIND {
+            continue;
+        }
         let bar = if short {
             f64::NEG_INFINITY
         } else {
@@ -223,6 +234,7 @@ pub fn free_agency_step(v: &GmView) -> Option<Command> {
 #[must_use]
 pub fn set_levels(v: &GmView) -> Vec<Command> {
     let roster = v.roster();
+    let mut cash = v.w.clubs[usize::from(v.team)].cash;
     let mut out = Vec::new();
     for kind in [Kind::Batter, Kind::Pitcher] {
         let mut mine: Vec<&Seen> = roster.iter().filter(|s| s.kind == kind).collect();
@@ -240,11 +252,21 @@ pub fn set_levels(v: &GmView) -> Vec<Command> {
             }
             at += level.capacity();
         }
-        for s in mine.iter().skip(at) {
-            out.push(Command::ReleasePlayer {
-                team: v.team,
-                player: s.id,
-            });
+        // Release the surplus, cheapest contracts first if cash is short.
+        let mut spare: Vec<&&Seen> = mine.iter().skip(at).collect();
+        spare.sort_by(|a, b| {
+            a.owed
+                .partial_cmp(&b.owed)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for s in spare {
+            if cash - s.owed >= -CREDIT {
+                cash -= s.owed;
+                out.push(Command::ReleasePlayer {
+                    team: v.team,
+                    player: s.id,
+                });
+            }
         }
     }
     out
