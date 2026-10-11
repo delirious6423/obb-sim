@@ -249,6 +249,9 @@ impl World {
                 if *year != self.year {
                     return invalid("days do not match the world");
                 }
+                if usize::from(*to_day) > crate::play::season_days(self) {
+                    return invalid("days run past the end of the season");
+                }
                 let mut st = self.season.take().unwrap_or_else(|| InSeason::start(self));
                 if *to_day <= st.day {
                     self.season = Some(st);
@@ -268,6 +271,11 @@ impl World {
                 expect_phase(self, Phase::Regular)?;
                 if *year != self.year || records.len() != self.clubs.len() {
                     return invalid("season does not match the world");
+                }
+                if let Some(st) = &self.season
+                    && usize::from(st.day) != crate::play::season_days(self)
+                {
+                    return invalid("the season is not over");
                 }
                 for l in lines {
                     let (played, _) = match l.line {

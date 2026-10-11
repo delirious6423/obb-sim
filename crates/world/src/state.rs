@@ -458,11 +458,49 @@ impl World {
             return bad("next player id is in use");
         }
         if s.phase != Phase::Unfounded
-            && (s.clubs.is_empty()
-                || !(s.finances.is_empty() || s.finances.len() == s.clubs.len())
-                || s.last_records.len() > s.clubs.len())
+            && (s.clubs.len() != TEAMS
+                || s.finances.len() != s.clubs.len()
+                || s.last_records.len() > s.clubs.len()
+                || s.year < 0)
         {
             return bad("club counts do not match");
+        }
+        let known = |mut ids: &mut dyn Iterator<Item = &PlayerId>| {
+            (&mut ids).all(|id| s.players.contains_key(id) || s.retired.contains_key(id))
+        };
+        if let Some(d) = &s.draft
+            && (d.order.iter().any(|c| usize::from(*c) >= s.clubs.len())
+                || !known(&mut d.remaining.iter()))
+        {
+            return bad("the draft names an unknown club or player");
+        }
+        if s.offers.iter().any(|o| {
+            usize::from(o.from) >= s.clubs.len()
+                || usize::from(o.to) >= s.clubs.len()
+                || !known(&mut o.give.iter().chain(&o.get))
+        }) {
+            return bad("a trade offer names an unknown club or player");
+        }
+        if s.history.iter().any(|h| {
+            h.champion.is_some_and(|c| usize::from(c) >= s.clubs.len())
+                || h.series
+                    .iter()
+                    .any(|x| usize::from(x.a) >= s.clubs.len() || usize::from(x.b) >= s.clubs.len())
+        }) {
+            return bad("history names an unknown club");
+        }
+        if let Some(st) = &s.season
+            && (st.records.len() != s.clubs.len()
+                || !known(
+                    &mut st
+                        .lines
+                        .keys()
+                        .chain(st.out.keys())
+                        .chain(st.loss.keys())
+                        .chain(&st.hurt),
+                ))
+        {
+            return bad("the season under way does not match the clubs");
         }
         let finite = |x: f64| x.is_finite();
         if s.clubs

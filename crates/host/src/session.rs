@@ -531,9 +531,8 @@ impl Host {
             n += 1;
             ctl.step(n);
         }
-        let champ = views::standings(&self.world).champion.unwrap_or_default();
-        self.notices
-            .push(format!("{champ} won the {}", self.world.year));
+        let (year, champ) = views::last_champion(&self.world).unwrap_or_default();
+        self.notices.push(format!("{champ} won the {year}"));
         self.notices.push("The draft is open.".into());
         Ok(format!("{champ} are the champions"))
     }

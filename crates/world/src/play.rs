@@ -53,8 +53,21 @@ pub(crate) struct Active {
     pub staff: Vec<PlayerId>,
 }
 
+/// Days in this year's regular season.
+pub(crate) fn season_days(w: &World) -> usize {
+    Schedule::generate(w.seed, w.year as u32, ROTATION)
+        .days
+        .len()
+}
+
 /// The healthiest, best nine batters and eleven pitchers a club can field.
-pub(crate) fn build_active(w: &World, team: usize, out: &BTreeMap<PlayerId, u16>) -> Active {
+/// `out` is the in-season injury list (absent means healthy); `None` takes
+/// each player's own injury, for the playoffs.
+pub(crate) fn build_active(
+    w: &World,
+    team: usize,
+    out: Option<&BTreeMap<PlayerId, u16>>,
+) -> Active {
     let state = &w.clubs[team];
     let pick = |kind: Kind, need: usize| -> Vec<(PlayerId, f64)> {
         let mut healthy: Vec<(Level, PlayerId, f64)> = Vec::new();
@@ -65,7 +78,7 @@ pub(crate) fn build_active(w: &World, team: usize, out: &BTreeMap<PlayerId, u16>
                 continue;
             }
             let now = opinion(w, team as u8, p).now;
-            let o = out.get(id).copied().unwrap_or(p.out_games);
+            let o = out.map_or(p.out_games, |m| m.get(id).copied().unwrap_or(0));
             if o == 0 {
                 healthy.push((p.level, *id, now));
             } else {
@@ -251,7 +264,9 @@ fn play_range(
     to: usize,
     seg_end: bool,
 ) -> Event {
-    let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, &st.out)).collect();
+    let actives: Vec<Active> = (0..TEAMS)
+        .map(|t| build_active(w, t, Some(&st.out)))
+        .collect();
     let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
     let mut bat = vec![[BatTotals::default(); LINEUP]; TEAMS];
     let mut pit = vec![vec![PitchTotals::default(); ROTATION + BULLPEN]; TEAMS];
@@ -440,7 +455,7 @@ pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
     let nd = schedule.days.len();
     let seg = segment_of(usize::from(r.day), nd);
     let out = st.seg_starts.get(seg)?;
-    let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, out)).collect();
+    let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, Some(out))).collect();
     let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
     let f = schedule.fixture(number)?;
     let o = replay_game_with(&w.env, &clubs, f, w.seed, w.year as u32);
@@ -458,6 +473,5 @@ pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
 
 /// Clubs as they stand (injured players excluded), for the playoffs.
 pub(crate) fn playoff_clubs(w: &World) -> Vec<Club> {
-    let none = BTreeMap::new();
-    (0..TEAMS).map(|t| build_active(w, t, &none).club).collect()
+    (0..TEAMS).map(|t| build_active(w, t, None).club).collect()
 }

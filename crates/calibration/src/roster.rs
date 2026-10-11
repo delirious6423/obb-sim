@@ -146,6 +146,14 @@ fn centre(population: &mut [(f64, &mut [f64; OUTCOMES])], league: &Rates) {
     }
 }
 
+/// The name of fictional team `t`: the same whatever the seed.
+#[must_use]
+pub fn team_name(t: usize) -> String {
+    let city = CITIES[t % CITIES.len()];
+    let mascot = MASCOTS[(t / CITIES.len() + t) % MASCOTS.len()];
+    format!("{city} {mascot}")
+}
+
 /// Generate `teams` fictional teams, deterministically from `seed`.
 #[must_use]
 pub fn generate(league: &Rates, talent: &Talent, teams: usize, seed: u64) -> Vec<TeamSpec> {
@@ -157,9 +165,7 @@ pub fn generate(league: &Rates, talent: &Talent, teams: usize, seed: u64) -> Vec
     for t in 0..teams {
         // City + mascot, made unique by sticking to the lists and adding an
         // ordinal only if they run out.
-        let city = CITIES[t % CITIES.len()];
-        let mascot = MASCOTS[(t / CITIES.len() + t) % MASCOTS.len()];
-        let name = format!("{city} {mascot}");
+        let name = team_name(t);
         let mut mk = |draw: &mut Draw, sd: &[f64; OUTCOMES]| Specimen {
             name: make_name(draw, &mut used),
             rates: draw_rates(draw, league, sd),

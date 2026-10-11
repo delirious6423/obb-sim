@@ -231,6 +231,13 @@ pub(crate) fn standings(w: &World) -> Standings {
     }
 }
 
+/// The most recent champion's name and year.
+pub(crate) fn last_champion(w: &World) -> Option<(i32, String)> {
+    let h = w.history.last()?;
+    let c = h.champion?;
+    Some((h.year, w.clubs[usize::from(c)].name.clone()))
+}
+
 pub(crate) fn schedule(w: &World, club: u8) -> ScheduleView {
     let sched = Schedule::generate(w.seed, w.year as u32, 5);
     let results = w.season.as_ref().map(|s| &s.results);

@@ -12,7 +12,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use calibration::Calibration;
-use storage::LocalStore;
+use storage::{LocalStore, SaveStore, SlotId};
 
 use crate::api::{Progress, Request, Response};
 use crate::session::{Control, Host, saves_of};
@@ -101,7 +101,7 @@ fn run(
     let open = || saves.as_ref().and_then(|d| LocalStore::open(d).ok());
     let mut host: Option<Host> = None;
     while let Ok((id, req)) = jobs.recv() {
-        let resp = {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             match (&mut host, req.clone()) {
                 (_, Request::NewGame(g)) => match Host::new_game(cal, &g) {
                     Ok(mut h) => {
@@ -128,10 +128,22 @@ fn run(
                     Some(store) => saves_of(&store),
                     None => Response::Saves(Vec::new()),
                 },
+                (None, Request::DeleteSave { slot }) => match open() {
+                    Some(store) => match SlotId::new(slot).and_then(|s| store.delete(&s)) {
+                        Ok(()) => Response::Done("Deleted".into()),
+                        Err(e) => Response::Failed(e.to_string()),
+                    },
+                    None => Response::Failed("no save folder".into()),
+                },
                 (Some(h), r) => h.handle(r),
                 (None, _) => Response::Failed("no game in progress".into()),
             }
-        };
+        }));
+        let resp = outcome.unwrap_or_else(|_| {
+            // The league may be half-changed: drop it, keep the process up.
+            host = None;
+            Response::Failed("internal error: the league was closed; load a save to go on".into())
+        });
         if out.send((id, resp)).is_err() {
             break;
         }
