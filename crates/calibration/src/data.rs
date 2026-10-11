@@ -112,6 +112,14 @@ pub struct TeamSeasonSpread {
     pub hr_pct: MeanSd,
 }
 
+/// Correlation of true talent between the first seven outcomes (all but the
+/// in-play-out residual), for batters and for pitchers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CorrelationFile {
+    pub batter: Vec<Vec<f64>>,
+    pub pitcher: Vec<Vec<f64>>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ParamsFile {
     source: String,
@@ -122,6 +130,7 @@ struct ParamsFile {
     fielding: FieldingFile,
     baserunning: BaserunningFile,
     run_environment: RunEnvironment,
+    correlation: CorrelationFile,
 }
 
 /// True-talent spread: relative standard deviation of each outcome's rate
@@ -151,6 +160,7 @@ pub struct Calibration {
     pub params: GameParams,
     pub talent: Talent,
     pub run_environment: RunEnvironment,
+    pub correlation: CorrelationFile,
 }
 
 impl Calibration {
@@ -197,6 +207,7 @@ impl Calibration {
             pa: f.pa,
             params,
             run_environment: f.run_environment,
+            correlation: f.correlation,
             talent: Talent {
                 batter_sd: f.talent.batter.array(),
                 pitcher_sd: f.talent.pitcher.array(),

@@ -73,13 +73,13 @@ Gate: 1,000 simulated seasons give realistic AVG, ERA, HR and K% distributions; 
 
 Gate: 50-season runs show no talent inflation or collapse and no insolvent teams; draft-slot value curves and bust rates match real-world ranges.
 
-- [ ] Player generation: hidden true talent, correlated archetypes, origin pipelines
-- [ ] Ratings-to-outcomes fit
-- [ ] Progression and aging, retirement, injuries
-- [ ] Minor leagues with level equivalencies
-- [ ] Draft: noisy team-specific boards, signability
-- [ ] Minimal economy: revenue, payroll cap, budget; fixed-behavior owner and commissioner agents
-- [ ] Gate run + reviewer + log entry
+- [x] Player generation: hidden true talent, correlated archetypes, origin pipelines
+- [x] Ratings-to-outcomes fit
+- [x] Progression and aging, retirement, injuries
+- [x] Minor leagues with level equivalencies
+- [x] Draft: noisy team-specific boards, signability
+- [x] Minimal economy: revenue, payroll cap, budget; fixed-behavior owner and commissioner agents
+- [ ] Gate run + reviewer + log entry. **BLOCKED: gate fails on one metric after 2 fix attempts (see Log); needs a decision.**
 
 ## Phase 4a: manager AI
 
@@ -121,6 +121,15 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - Playoff starters resume at `162 % rotation`, not at the club's actual rotation position; ties are broken by run difference then club number (no head-to-head).
 - DH adjustment in the tool uses league rates that include pitchers' own PAs (about 0.2% of runs).
 
+- Phase 3 (world crate): design is `world` crate with strict events (`World::apply`), commands via `World::execute`, driver `run_year`, agents (`GmView` shows only noisy opinions); founding runs a burn-in of offseasons (no games) from a seeded population, with opening cash restored afterwards.
+- Aging curve (peak 27, deficit by age, decline from 30), injury rates, amateur pool (spread 1.3, offsets 2.2 batters / 2.0 pitchers below league average), scouting noise (1.5 quality-sd on amateurs) and age-scaled development luck are assumptions tuned for stability, not fitted to data (no age data source approved).
+- Minors are roster tiers only (no minor-league games); minor leaguers get the same injury rolls as major leaguers; level equivalencies are not modelled.
+- Draft-curve bands in `crates/world/tests/world_gate.rs` are rough ranges from general knowledge, fixed before the first run; international prospects are drafted in separate rounds and not in the curve.
+- Majors still hold some 17-20 year-olds (about 4% of major leaguers) when a teenager out-scouts the field; BB% runs about +10% over the real league (selection on walk-heavy talent), runs/team-game about +4% (4.90 vs 4.70).
+- Free agency is one signing per club per round with fixed GM behaviour; releases cost the remaining salary; contracts are salary x years only (no arbitration, no options, no trades yet).
+- Gate robustness: on the gate's own seed it was met once (before the cash fix changed the random path); on seeds 1-5 the "picks 11-30 reach the majors" rate is 0.82-0.84 against a band of 0.40-0.80, and BB% drifted +7.8% between first and last decade on seed 2.
+- Phase 3 reviewer findings left open: (1) market `ask` and amateur `demand` are derived from true quality/peak (small noise), so a GM can infer talent beyond its scouting noise; make prices depend on public information before Phase 4b difficulty presets; (2) roster capacity (11/11/14, 49 per kind) is enforced only by the AI's `set_levels`, not by `apply`; (3) club cash has no floor and release dead money is not recorded in `Finance`; (4) `apply` trusts events (no id/club validation in DraftOpened, PlayoffsPlayed; multi-step events can fail half-applied) although `decide` is the only producer today; (5) no commissioner force-pass for a stalled draft; (6) tests do not cover retirement, expiry, dead money, SetLevel/Release, a successful draft pick or bonus refusal.
+
 ## Log
 
 - **Phase 0**: workspace, deterministic sim-core, command/event league, role checks. CI green on ubuntu, macOS, Windows; golden values identical on all three.
@@ -128,3 +137,4 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - **Phase 2.0 (pre-work)**: runs/team-game explained (pitcher batting vs universal DH +0.22, extra-inning runner +0.04; not an engine bug) and gated at ±3% against a DH-equivalent target (sim 4.697 vs 4.699). `GameParams.extra_inning_runner` rule flag added (calibration uses 2015-2019 rules). Walk-off no longer credits runs past the winning run (home runs excepted). Ghost-runner guard test added.
 - **Phase 2 (built)**: `season` crate: 162-game schedule for 30 clubs (divisions, interleague rotation, home/away balanced, days), play loop with rayon-parallel days and per-game streams (game id = season<<20 | game), standings, 12-team playoffs with series, summaries; cli `season`, `box [--pbp]`, `player`, `bench`; CI runs `bench`. Gate (`cargo test --release -p season -- --ignored season_gate --nocapture`): 1,000 seasons in 1.6 s on 10 threads, identical digests on 1 thread and all threads; league AVG .2556 vs .2539, K% 21.10 vs 21.14, HR/PA 3.207 vs 3.204, ERA 4.56, team-season spreads inside bands. Two gate-definition fixes before any pass: HR target changed from HR/game to HR/PA (per-game compared different PA counts); earned runs now use virtual outs after an error (ERA was 4.66, ER/R 0.98).
 - **Phase 1 tidy-up**: four small commits closing the remaining review gaps (see checklist).
+- **Phase 3 (built, gate NOT met)**: `world` crate (hidden-talent players, aging, injuries incl. minor leaguers, draft with noisy club boards and signability, free agency, revenue/payroll/budget economy, commands -> events with strict apply, fixed GM and owner agents, burn-in founding). Tests: determinism, event replay equals state, role/phase/club enforcement, roster invariants. Gate (`cargo test --release -p world --test world_gate -- --ignored --nocapture`, 50 seasons): league K/BB/HR/runs inside bands and drift-free, major-league quality drift under 0.15 sd, no insolvent club (lowest cash > 0) all PASS. FAIL: picks 11-30 reach the majors 0.84 vs band 0.40-0.80 (other draft metrics pass: picks 1-10 0.94/WAR 26/bust 0.10; 31-90 0.54/WAR 4.0; 91-300 0.12/WAR 0.3/bust 0.92). Fix attempt 1: amateur scouting noise 0.8/0.7 -> 1.5/1.5 and age-scaled development luck (before: top-10 reach 0.99, WAR 37). Fix attempt 2: opening cash restored after burn-in (cause of negative cash on other seeds) and injuries for minor leaguers (no effect on the failing metric). Gate thresholds were not changed (one test bug fixed: runs/team-game was divided by 2 twice). Stopped per the directive; needs a decision.

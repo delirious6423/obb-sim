@@ -8,7 +8,7 @@ use sim_core::{Env, NullSink, simulate_game};
 
 use crate::club::Club;
 use crate::schedule::{TEAMS, division_of, league_of};
-use crate::season::{Record, TeamSeason};
+use crate::season::Record;
 
 const PLAYOFF_ID_BASE: u64 = 1 << 19;
 
@@ -42,15 +42,15 @@ pub struct Playoffs {
     pub champion: usize,
 }
 
-fn better(teams: &[TeamSeason], x: usize, y: usize) -> bool {
-    key(&teams[x].record, x) > key(&teams[y].record, y)
+fn better(records: &[Record], x: usize, y: usize) -> bool {
+    key(&records[x], x) > key(&records[y], y)
 }
 
 fn key(r: &Record, t: usize) -> (u16, i64, i64) {
     (r.w, r.run_diff(), -(t as i64))
 }
 
-fn seeds(teams: &[TeamSeason], league: usize) -> [u8; 6] {
+fn seeds(records: &[Record], league: usize) -> [u8; 6] {
     let members: Vec<usize> = (0..TEAMS).filter(|t| league_of(*t) == league).collect();
     let mut winners: Vec<usize> = Vec::new();
     for d in 0..6 {
@@ -58,17 +58,17 @@ fn seeds(teams: &[TeamSeason], league: usize) -> [u8; 6] {
             .iter()
             .copied()
             .filter(|t| division_of(*t) == d)
-            .max_by_key(|t| key(&teams[*t].record, *t));
+            .max_by_key(|t| key(&records[*t], *t));
         if let Some(b) = best {
             winners.push(b);
         }
     }
-    winners.sort_by_key(|t| std::cmp::Reverse(key(&teams[*t].record, *t)));
+    winners.sort_by_key(|t| std::cmp::Reverse(key(&records[*t], *t)));
     let mut rest: Vec<usize> = members
         .into_iter()
         .filter(|t| !winners.contains(t))
         .collect();
-    rest.sort_by_key(|t| std::cmp::Reverse(key(&teams[*t].record, *t)));
+    rest.sort_by_key(|t| std::cmp::Reverse(key(&records[*t], *t)));
     let mut out = [0u8; 6];
     for (i, t) in winners.iter().chain(rest.iter().take(3)).enumerate() {
         out[i] = *t as u8;
@@ -187,14 +187,16 @@ fn round(
     winners
 }
 
-pub(crate) fn play(
+/// Play the playoffs for a finished regular season, given each club's record.
+#[must_use]
+pub fn play_playoffs(
     env: &Env,
     clubs: &[Club],
-    teams: &[TeamSeason],
+    records: &[Record],
     seed: u64,
     season: u32,
 ) -> Playoffs {
-    let seeds = [seeds(teams, 0), seeds(teams, 1)];
+    let seeds = [seeds(records, 0), seeds(records, 1)];
     let mut starts: Vec<usize> = vec![usize::from(crate::schedule::GAMES_PER_TEAM); TEAMS];
     let mut all = Vec::new();
 
@@ -234,7 +236,7 @@ pub(crate) fn play(
 
     // League series: the better record hosts.
     let ordered = |x: u8, y: u8| {
-        if better(teams, usize::from(x), usize::from(y)) {
+        if better(records, usize::from(x), usize::from(y)) {
             (x, y)
         } else {
             (y, x)

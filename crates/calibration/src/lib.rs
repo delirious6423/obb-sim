@@ -8,6 +8,9 @@ mod data;
 mod roster;
 mod run;
 
-pub use data::{Calibration, DataError, Eight, MeanSd, RunEnvironment, Talent, TeamSeasonSpread};
+pub use data::{
+    Calibration, CorrelationFile, DataError, Eight, MeanSd, RunEnvironment, Talent,
+    TeamSeasonSpread,
+};
 pub use roster::{BULLPEN, ROTATION, Specimen, TeamSpec, generate, teams_by_starter};
 pub use run::{Report, TEAMS, Totals, simulate};

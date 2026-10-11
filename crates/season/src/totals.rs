@@ -21,7 +21,7 @@ pub struct BatTotals {
 }
 
 impl BatTotals {
-    pub(crate) fn add(&mut self, b: &BatLine) {
+    pub fn add(&mut self, b: &BatLine) {
         self.g += 1;
         self.pa += u32::from(b.pa);
         self.ab += u32::from(b.ab);
@@ -37,6 +37,25 @@ impl BatTotals {
         self.sf += u32::from(b.sf);
         self.sb += u32::from(b.sb);
         self.cs += u32::from(b.cs);
+    }
+
+    /// Add another set of totals into this one.
+    pub fn merge(&mut self, o: &Self) {
+        self.g += o.g;
+        self.pa += o.pa;
+        self.ab += o.ab;
+        self.r += o.r;
+        self.h += o.h;
+        self.doubles += o.doubles;
+        self.triples += o.triples;
+        self.hr += o.hr;
+        self.rbi += o.rbi;
+        self.bb += o.bb;
+        self.so += o.so;
+        self.hbp += o.hbp;
+        self.sf += o.sf;
+        self.sb += o.sb;
+        self.cs += o.cs;
     }
 
     #[must_use]
@@ -79,7 +98,7 @@ pub struct PitchTotals {
 }
 
 impl PitchTotals {
-    pub(crate) fn add(&mut self, p: &PitchLine) {
+    pub fn add(&mut self, p: &PitchLine) {
         self.g += 1;
         self.outs += u32::from(p.outs);
         self.h += u32::from(p.h);
@@ -91,6 +110,21 @@ impl PitchTotals {
         self.hbp += u32::from(p.hbp);
         self.bf += u32::from(p.bf);
         self.pitches += u32::from(p.pitches);
+    }
+
+    /// Add another set of totals into this one.
+    pub fn merge(&mut self, o: &Self) {
+        self.g += o.g;
+        self.outs += o.outs;
+        self.h += o.h;
+        self.r += o.r;
+        self.er += o.er;
+        self.bb += o.bb;
+        self.so += o.so;
+        self.hr += o.hr;
+        self.hbp += o.hbp;
+        self.bf += o.bf;
+        self.pitches += o.pitches;
     }
 
     #[must_use]

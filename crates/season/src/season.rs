@@ -96,6 +96,27 @@ pub fn replay_game(env: &Env, clubs: &[Club], f: &Fixture, seed: u64, season: u3
     )
 }
 
+/// Like [`replay_game`] for clubs given by reference (rosters that change during a season).
+#[must_use]
+pub fn replay_game_with(
+    env: &Env,
+    clubs: &[&Club],
+    f: &Fixture,
+    seed: u64,
+    season: u32,
+) -> GameOutcome {
+    let away = &clubs[usize::from(f.away)].rotation[usize::from(f.away_starter)];
+    let home = &clubs[usize::from(f.home)].rotation[usize::from(f.home_starter)];
+    simulate_game(
+        env,
+        away,
+        home,
+        seed,
+        game_id(season, f.number),
+        &mut NullSink,
+    )
+}
+
 fn record_game(teams: &mut [TeamSeason], clubs: &[Club], f: &Fixture, o: &GameOutcome) {
     let ids = [usize::from(f.away), usize::from(f.home)];
     let starters = [usize::from(f.away_starter), usize::from(f.home_starter)];
@@ -145,7 +166,8 @@ pub fn play_season(env: &Env, clubs: &[Club], seed: u64, season: u32) -> SeasonR
             record_game(&mut teams, clubs, f, o);
         }
     }
-    let playoffs = playoffs::play(env, clubs, &teams, seed, season);
+    let records: Vec<Record> = teams.iter().map(|t| t.record).collect();
+    let playoffs = playoffs::play_playoffs(env, clubs, &records, seed, season);
     SeasonResult {
         season,
         schedule,

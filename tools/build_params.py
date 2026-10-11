@@ -499,6 +499,31 @@ def spread(table, league, exclude, min_n):
     return sds, n
 
 
+def correlations(table, min_n):
+    """Correlation of true talent between the seven non-residual outcome rates,
+    with binomial/multinomial sampling noise removed from the covariances."""
+    rows = [r for r in table.values() if r[0] >= min_n]
+    n, k = len(rows), 7
+    ps = [[r[o + 1] / r[0] for o in range(k)] for r in rows]
+    means = [sum(p[i] for p in ps) / n for i in range(k)]
+    cov = [[0.0] * k for _ in range(k)]
+    for i in range(k):
+        for j in range(k):
+            obs = sum((p[i] - means[i]) * (p[j] - means[j]) for p in ps) / (n - 1)
+            if i == j:
+                noise = sum(p[i] * (1 - p[i]) / r[0] for p, r in zip(ps, rows)) / n
+            else:
+                noise = -sum(p[i] * p[j] / r[0] for p, r in zip(ps, rows)) / n
+            cov[i][j] = obs - noise
+    corr = [[1.0] * k for _ in range(k)]
+    for i in range(k):
+        for j in range(k):
+            if i != j:
+                d = math.sqrt(max(cov[i][i], 1e-12) * max(cov[j][j], 1e-12))
+                corr[i][j] = max(-0.95, min(0.95, cov[i][j] / d))
+    return corr
+
+
 def build(tot):
     if tot.pa == 0:
         raise SystemExit("no plate appearances read")
@@ -603,6 +628,10 @@ def build(tot):
         "fielding": fielding,
         "baserunning": baserunning,
         "run_environment": run_env,
+        "correlation": {
+            "batter": correlations(tot.bat, MIN_QUALIFIER_PA),
+            "pitcher": correlations(tot.pit, 200),
+        },
     }, {"bat_n": bat_n, "pit_n": pit_n}
 
 
@@ -633,6 +662,10 @@ def report(tot, params, counts):
     print("fielding: %s" % {k: round(v, 4) for k, v in params["fielding"].items()})
     print("baserunning: %s" % {k: [round(x, 4) for x in v] if isinstance(v, list) else round(v, 4)
                                for k, v in params["baserunning"].items()})
+    for who in ("batter", "pitcher"):
+        print("talent correlation (%s), order k bb hbp 1b 2b 3b hr:" % who)
+        for row in params["correlation"][who]:
+            print("  " + " ".join("%+.2f" % x for x in row))
     print("talent SD (batter): %s" % {k: round(v, 3) for k, v in params["talent"]["batter"].items()})
     print("talent SD (pitcher): %s" % {k: round(v, 3) for k, v in params["talent"]["pitcher"].items()})
 
