@@ -67,7 +67,7 @@ Gate: 1,000 simulated seasons give realistic AVG, ERA, HR and K% distributions; 
 - [x] Speed benchmarks in CI
 - [x] Thin cli viewer: standings, box scores, player pages
 - [x] Gate run (1,000 seasons; all checks PASS, see log)
-- [ ] Reviewer + fixes + log entry
+- [x] Reviewer + fixes + log entry
 
 ## Phase 3: players over time
 
@@ -116,6 +116,10 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - Season: no series, travel, off-day or weather structure; fixed lineup and 5-man rotation all season (no injuries/rest until Phase 3); playoffs seeded by wins, run difference, club number (no head-to-head).
 - Unearned runs: engine now uses the virtual-outs rule, but non-reached-base errors are not modelled, so ER/R is 0.96 vs about 0.93 real; league ERA 4.56 vs about 4.4 for the DH-equivalent environment.
 - Season gate bands for spread (0.6-1.5x of real team-season SD, ERA/win% ranges) were fixed before the first run; team AVG spread runs 1.21x real, K%/HR 0.8x.
+
+- Season gate: ERA band (3.9-4.6) and win%/ERA spread bands are hard-coded, not derived from data; spread bands 0.6-1.5x are loose (a 20% error would pass). Derive and tighten when real ERA/win% distributions are added to the tool. K% check compares to the engine's own input rate (same as the real rate).
+- Playoff starters resume at `162 % rotation`, not at the club's actual rotation position; ties are broken by run difference then club number (no head-to-head).
+- DH adjustment in the tool uses league rates that include pitchers' own PAs (about 0.2% of runs).
 
 ## Log
 

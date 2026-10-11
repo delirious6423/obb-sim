@@ -9,9 +9,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use calibration::{Calibration, Talent};
-use season::{
-    Club, SeasonResult, TEAMS, division_of, fictional_league, league_of, play_season, replay_game,
-};
+use season::{Club, SeasonResult, TEAMS, fictional_league, league_of, play_season, replay_game};
 use sim_core::{Env, GameParams};
 
 struct World {
@@ -157,7 +155,6 @@ fn standings(w: &World, r: &SeasonResult) -> String {
         }
         let _ = writeln!(s);
     }
-    let _ = division_of(0);
     s
 }
 

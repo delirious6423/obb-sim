@@ -61,19 +61,9 @@ impl SeasonResult {
             eat(u64::from(f.away) << 8 | u64::from(f.home));
         }
         for t in &self.teams {
-            eat(u64::from(t.record.w));
-            eat(u64::from(t.record.l));
-            eat(u64::from(t.record.rs));
-            eat(u64::from(t.record.ra));
-            for b in &t.batting {
-                for v in [b.pa, b.ab, b.h, b.hr, b.rbi, b.bb, b.so, b.sb] {
-                    eat(u64::from(v));
-                }
-            }
-            for p in &t.pitching {
-                for v in [p.outs, p.h, p.r, p.er, p.bb, p.so, p.hr, p.bf] {
-                    eat(u64::from(v));
-                }
+            // Everything in the team's season, via its derived Debug text.
+            for byte in format!("{t:?}").bytes() {
+                eat(u64::from(byte));
             }
         }
         for s in &self.playoffs.series {
