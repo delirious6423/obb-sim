@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 league.workspace = true
 protocol.workspace = true
+sim-core.workspace = true
 
 [lints]
 workspace = true

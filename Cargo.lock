@@ -23,6 +23,7 @@ version = "0.0.0"
 dependencies = [
  "league",
  "protocol",
+ "sim-core",
 ]
 
 [[package]]

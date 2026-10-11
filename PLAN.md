@@ -35,13 +35,13 @@ Tidy-up
 - [x] Multi-event commands atomic (clone-and-swap)
 
 Engine (`sim-core`; pure; no I/O; data passed in)
-- [ ] `GameParams` (league rates, fielding, baserunning, steals) + a clearly-labelled generic `reference()` for tests
-- [ ] log5 plate-appearance resolver, precomputed, no per-PA allocation
-- [ ] Baserunning: advancement on hits/outs, double plays, sacrifice flies, rate-based steals
-- [ ] Fielding: in-play out -> ground/fly/line, error rate
-- [ ] Game loop: 9 innings, extra innings (runner on second), walk-offs, lineups, starter + relief rule
-- [ ] Event sink trait: no-op sink for the hot loop, play-by-play + box score renderers
-- [ ] Non-ignored smoke test that plays a full game (runs in CI)
+- [x] `GameParams` (league rates, fielding, baserunning, steals) + a clearly-labelled generic `reference()` for tests
+- [x] log5 plate-appearance resolver, precomputed, no per-PA allocation
+- [x] Baserunning: advancement on hits/outs, double plays, sacrifice flies, rate-based steals
+- [x] Fielding: in-play out -> ground/fly/line, error rate
+- [x] Game loop: 9 innings, extra innings (runner on second), walk-offs, lineups, starter + relief rule
+- [x] Event sink trait: no-op sink for the hot loop, play-by-play + box score renderers
+- [x] Non-ignored smoke test that plays a full game (runs in CI)
 
 Calibration (kept out of git)
 - [ ] `data/internal/` in `.gitignore`; download Retrosheet 2015-2019 event files (approved) into it
