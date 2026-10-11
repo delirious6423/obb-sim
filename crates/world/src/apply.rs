@@ -3,8 +3,8 @@
 use crate::command::{ClubFinanceState, Event, Founding, Line, Outcome, WorldError};
 use crate::player::{Contract, Level, Player, PlayerId};
 use crate::state::{
-    Draft, MAJORS_PER_KIND, MINOR_COST, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, SeasonRecord,
-    World,
+    Draft, InSeason, MAJORS_PER_KIND, MINOR_COST, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND,
+    SeasonRecord, World,
 };
 
 fn invalid<T>(msg: impl Into<String>) -> Result<T, WorldError> {
@@ -102,6 +102,37 @@ impl World {
                 }
                 if f.next_player < top {
                     return invalid("next player id is already in use");
+                }
+            }
+            Event::DaysPlayed {
+                results,
+                lines,
+                segment_end,
+                ..
+            } => {
+                if results
+                    .iter()
+                    .any(|r| !club_ok(r.away) || !club_ok(r.home) || r.away == r.home)
+                {
+                    return invalid("a game names an unknown club");
+                }
+                let hurt = segment_end.iter().flat_map(|s| {
+                    s.out
+                        .keys()
+                        .copied()
+                        .chain(s.hurt.iter().copied())
+                        .chain(s.loss.iter().map(|(id, _)| *id))
+                });
+                for id in lines.iter().map(|(id, _)| *id).chain(hurt) {
+                    if !self.players.contains_key(&id) {
+                        return Err(WorldError::UnknownPlayer(id));
+                    }
+                }
+                if segment_end
+                    .iter()
+                    .any(|s| s.loss.iter().any(|(_, l)| !l.is_finite()))
+                {
+                    return invalid("injury damage must be finite");
                 }
             }
             Event::SeasonPlayed {
@@ -213,6 +244,20 @@ impl World {
         self.validate(e)?;
         match e {
             Event::Founded(f) => self.found(f),
+            Event::DaysPlayed { year, to_day, .. } => {
+                expect_phase(self, Phase::Regular)?;
+                if *year != self.year {
+                    return invalid("days do not match the world");
+                }
+                let mut st = self.season.take().unwrap_or_else(|| InSeason::start(self));
+                if *to_day <= st.day {
+                    self.season = Some(st);
+                    return invalid("days must move forward");
+                }
+                st.absorb(e);
+                self.season = Some(st);
+                Ok(())
+            }
             Event::SeasonPlayed {
                 year,
                 records,
@@ -372,6 +417,7 @@ impl World {
                     return invalid("progression must advance exactly one year");
                 }
                 self.era = *era;
+                self.season = None;
                 self.year = *year;
                 for u in updates {
                     let id = u.player;

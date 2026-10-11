@@ -1,7 +1,7 @@
 use sim_core::{BatLine, PitchLine};
 
 /// A batter's accumulated line.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BatTotals {
     pub g: u32,
     pub pa: u32,
@@ -82,7 +82,7 @@ impl BatTotals {
 }
 
 /// A pitcher's accumulated line.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PitchTotals {
     pub g: u32,
     pub outs: u32,

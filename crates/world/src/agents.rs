@@ -158,6 +158,12 @@ impl<'a> GmView<'a> {
         Self { w, team }
     }
 
+    /// One player as this club sees him.
+    #[must_use]
+    pub fn see_player(&self, id: PlayerId) -> Seen {
+        self.see(id)
+    }
+
     fn see(&self, id: PlayerId) -> Seen {
         let p = &self.w.players[&id];
         let o = opinion(self.w, self.team, p);

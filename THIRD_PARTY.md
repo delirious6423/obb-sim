@@ -12,6 +12,8 @@ Required notice, from Retrosheet:
 
 > The information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at "www.retrosheet.org".
 
+`data/params.json` (committed, embedded in the game by the `host` crate) holds only the league-wide aggregates derived from those files: rates, talent spreads, correlations and run environment, 6 KB, no player, team or game. The raw files stay in `data/internal/` (git-ignored). The notice above must be shown in the game's credits.
+
 Source: https://www.retrosheet.org
 
 ## Rust crates (runtime)
@@ -23,5 +25,8 @@ Source: https://www.retrosheet.org
 | serde, serde_json | data formats | MIT OR Apache-2.0 |
 | thiserror | error types | MIT OR Apache-2.0 |
 | rayon (and its dependencies: crossbeam-*, either, rayon-core) | parallel days in the season simulator | MIT OR Apache-2.0 |
+| rusqlite 0.40 (feature `bundled`, builds SQLite from C source with `cc`) and its dependencies (libsqlite3-sys, fallible-iterator, hashlink, ...) | save files (`storage`) | MIT (SQLite itself: public domain) |
+| sha2 0.11 (and digest, crypto-common, ...) | save checksums | MIT OR Apache-2.0 |
+| tempfile (dev only) | tests | MIT OR Apache-2.0 |
 
 Licenses above are the crates' published licenses; re-check with `cargo deny` before any release.

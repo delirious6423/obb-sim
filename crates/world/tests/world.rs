@@ -476,3 +476,114 @@ fn replaying_refuses_events_that_do_not_fit() {
     };
     assert!(fresh_world.apply(&bad).is_err());
 }
+
+#[test]
+fn events_survive_a_round_trip_through_json_and_still_replay() {
+    let (w, log) = run(5, 2);
+    let text = serde_json::to_string(&log).expect("serialise");
+    let back: Vec<Event> = serde_json::from_str(&text).expect("deserialise");
+    assert_eq!(back, log);
+    let rebuilt = World::from_events(
+        5,
+        GameParams::reference(),
+        Model::generic(),
+        DEFAULT_POOL,
+        &back,
+    )
+    .expect("replay");
+    assert!(rebuilt == w);
+}
+
+/// Play a founded world's first season in steps of `step` days (0 = in one call).
+fn season_in_steps(step: u16) -> (World, Vec<Event>) {
+    let mut w = founded(9);
+    let c = Actor::commissioner();
+    let mut log = Vec::new();
+    loop {
+        let cmd = if step == 0 {
+            Command::PlaySeason
+        } else {
+            Command::PlayDays { days: step }
+        };
+        let ev = w.execute(&c, cmd).expect("play");
+        log.extend(ev);
+        if w.phase != Phase::Regular {
+            break;
+        }
+    }
+    (w, log)
+}
+
+#[test]
+fn a_season_is_the_same_however_its_days_are_split() {
+    let (whole, _) = season_in_steps(0);
+    let season = |log: &[Event]| {
+        log.iter()
+            .find(|e| matches!(e, Event::SeasonPlayed { .. }))
+            .cloned()
+            .expect("season played")
+    };
+    let (w1, log1) = season_in_steps(1);
+    let (w7, log7) = season_in_steps(7);
+    let (w50, log50) = season_in_steps(50);
+    let (_, log0) = season_in_steps(0);
+    assert_eq!(season(&log1), season(&log0));
+    assert_eq!(season(&log7), season(&log0));
+    assert_eq!(season(&log50), season(&log0));
+    assert!(w1 == whole && w7 == whole && w50 == whole);
+    let st = whole.season.as_ref().expect("kept until players progress");
+    assert_eq!(st.results.len(), 2430);
+}
+
+#[test]
+fn a_season_in_progress_shows_games_and_records() {
+    let mut w = founded(9);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::PlayDays { days: 10 }).expect("play");
+    assert_eq!(w.phase, Phase::Regular);
+    let st = w.season.as_ref().expect("in season");
+    assert_eq!(st.day, 10);
+    let games: u16 = st.records.iter().map(|r| r.w + r.l).sum::<u16>() / 2;
+    assert_eq!(usize::from(games), st.results.len());
+    assert!(st.results.len() > 100);
+    assert!(
+        w.clone()
+            .execute(&c, Command::PlayDays { days: 0 })
+            .is_err()
+    );
+    let first = w.season.as_ref().expect("in season").results[0];
+    let text = w
+        .box_score(first.number)
+        .expect("box score of a played game");
+    assert!(text.contains(&w.clubs[usize::from(first.home)].name));
+    assert!(
+        w.box_score(2_000).is_none(),
+        "an unplayed game has no box score"
+    );
+}
+
+#[test]
+fn a_restored_snapshot_plays_on_exactly_like_the_original() {
+    let (mut w, _) = run(6, 2);
+    // Part-way into a season, so the in-season state is covered too.
+    w.execute(&Actor::commissioner(), Command::PlayDays { days: 40 })
+        .expect("play");
+    let text = serde_json::to_string(&w.snapshot()).expect("serialise");
+    let snap: world::state::Snapshot = serde_json::from_str(&text).expect("deserialise");
+    let mut restored =
+        World::restore(GameParams::reference(), Model::generic(), snap).expect("restore");
+    assert!(restored == w);
+    for world in [&mut w, &mut restored] {
+        run_year(world, &mut Vec::new()).expect("a year");
+    }
+    assert!(restored == w, "the restored world diverged");
+}
+
+#[test]
+fn a_damaged_snapshot_is_refused() {
+    let (w, _) = run(6, 1);
+    let mut snap = w.snapshot();
+    let id = *snap.clubs[0].players.iter().next().expect("a player");
+    snap.players.get_mut(&id).expect("player").team = Some(3);
+    assert!(World::restore(GameParams::reference(), Model::generic(), snap).is_err());
+}

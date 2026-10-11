@@ -6,6 +6,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+serde.workspace = true
 calibration.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true

@@ -8,13 +8,17 @@ use thiserror::Error;
 use crate::player::{Contract, Level, Player, PlayerId};
 use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules, Tactics};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Command {
     // Commissioner
     Found {
         burn_in_years: u8,
     },
     PlaySeason,
+    /// Play the next `days` days of the regular season.
+    PlayDays {
+        days: u16,
+    },
     PlayPlayoffs,
     SettleFinances,
     ProgressPlayers,
@@ -74,6 +78,7 @@ impl Command {
         match self {
             Command::Found { .. }
             | Command::PlaySeason
+            | Command::PlayDays { .. }
             | Command::PlayPlayoffs
             | Command::SettleFinances
             | Command::ProgressPlayers
@@ -110,7 +115,29 @@ impl Command {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// The score of one game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GameResult {
+    /// Game number within the season's schedule.
+    pub number: u16,
+    pub day: u16,
+    pub away: u8,
+    pub home: u8,
+    pub away_runs: u16,
+    pub home_runs: u16,
+}
+
+/// Time passing and injuries at the end of a stretch of the season.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SegmentEnd {
+    /// Games each hurt player still has to miss.
+    pub out: std::collections::BTreeMap<PlayerId, u16>,
+    /// Permanent damage dealt this segment.
+    pub loss: Vec<(PlayerId, f64)>,
+    pub hurt: Vec<PlayerId>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Founding {
     pub year: i32,
     pub rules: Rules,
@@ -121,20 +148,20 @@ pub struct Founding {
 }
 
 /// What a player did in a season, with his value above a replacement player.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Line {
     Bat(BatTotals),
     Pitch(PitchTotals),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SeasonLine {
     pub player: PlayerId,
     pub line: Line,
     pub war: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Injury {
     pub player: PlayerId,
     /// Games still to miss when the season ended.
@@ -143,7 +170,7 @@ pub struct Injury {
     pub loss: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Update {
     pub player: PlayerId,
     pub drift: f64,
@@ -154,7 +181,7 @@ pub struct Update {
     pub outcome: Outcome,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Outcome {
     Stays,
     /// Contract ran out: becomes a free agent.
@@ -162,9 +189,19 @@ pub enum Outcome {
     Retired,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Event {
     Founded(Box<Founding>),
+    /// Some days of the regular season, played: the games, what the players
+    /// did in them (as additions), and, at a segment's end, who got hurt.
+    DaysPlayed {
+        year: i32,
+        /// Days played so far after this event.
+        to_day: u16,
+        results: Vec<GameResult>,
+        lines: Vec<(PlayerId, Line)>,
+        segment_end: Option<SegmentEnd>,
+    },
     SeasonPlayed {
         year: i32,
         records: Vec<Record>,
@@ -246,7 +283,7 @@ pub enum Event {
 }
 
 /// Club money after settlement.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClubFinanceState {
     pub cash: f64,
     pub revenue_prev: f64,

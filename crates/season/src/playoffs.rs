@@ -12,7 +12,7 @@ use crate::season::Record;
 
 const PLAYOFF_ID_BASE: u64 = 1 << 19;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Series {
     /// 0 wild card, 1 division series, 2 league series, 3 World Series.
     pub round: u8,

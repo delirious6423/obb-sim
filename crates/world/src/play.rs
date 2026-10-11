@@ -4,15 +4,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use season::{BatTotals, Club, PitchTotals, Record, Schedule, TEAMS, replay_game_with};
+use season::{BatTotals, Club, PitchTotals, Schedule, TEAMS, replay_game_with};
 use sim_core::{GameOutcome, LINEUP, ManagerMaker, Player as SimPlayer, Team};
 use tactics::{TableManagerMaker, Tables};
 
-use crate::command::{Event, Injury, Line, SeasonLine};
+use crate::command::{Event, GameResult, Injury, Line, SeasonLine, SegmentEnd};
 use crate::player::{Level, Player, PlayerId};
 use crate::rating::{Kind, normal, uniform};
 use crate::scout::{REPLACEMENT, opinion};
-use crate::state::{LeagueLine, Tactics, World};
+use crate::state::{InSeason, LeagueLine, Tactics, World};
 use crate::util::{stream, tag};
 
 const SEGMENTS: usize = 6;
@@ -203,91 +203,130 @@ fn war(w: &World, kind: Kind, line: &Line, runs_per_out: f64) -> f64 {
     }
 }
 
-/// Play the regular season in segments; rosters are re-chosen between them
-/// as players get hurt and return.
-pub(crate) fn play_regular(w: &World) -> Event {
+/// First day of segment `seg` and the day after its last (rosters are
+/// re-chosen between segments as players get hurt and return).
+fn segment_bounds(seg: usize, days: usize) -> (usize, usize) {
+    (seg * days / SEGMENTS, (seg + 1) * days / SEGMENTS)
+}
+
+fn segment_of(day: usize, days: usize) -> usize {
+    (0..SEGMENTS)
+        .find(|s| day < segment_bounds(*s, days).1)
+        .unwrap_or(SEGMENTS - 1)
+}
+
+/// Play the next `days` days of the regular season (all that is left when
+/// `days` is large). The result is the same however the days are split:
+/// rosters are chosen at segment starts and the injury rolls depend only on
+/// the segment, so stepping day by day gives the same season as one call.
+pub(crate) fn play_days(w: &World, days: u16) -> Vec<Event> {
     let schedule = Schedule::generate(w.seed, w.year as u32, ROTATION);
     let nd = schedule.days.len();
-    let mut out: BTreeMap<PlayerId, u16> = w
-        .players
-        .values()
-        .filter(|p| p.team.is_some() && p.out_games > 0)
-        .map(|p| (p.id, p.out_games))
-        .collect();
-    let mut records = vec![Record::default(); TEAMS];
-    let mut lines: BTreeMap<PlayerId, Line> = BTreeMap::new();
-    let mut loss: BTreeMap<PlayerId, f64> = BTreeMap::new();
-    let mut hurt_this_year: BTreeMap<PlayerId, ()> = BTreeMap::new();
+    let mut st = w.season.clone().unwrap_or_else(|| InSeason::start(w));
+    let target = (usize::from(st.day) + usize::from(days)).min(nd);
+    let mut events = Vec::new();
+    while usize::from(st.day) < target {
+        let from = usize::from(st.day);
+        let seg = segment_of(from, nd);
+        let (_, end) = segment_bounds(seg, nd);
+        let to = end.min(target);
+        let ev = play_range(w, &schedule, &st, seg, from, to, to == end);
+        st.absorb(&ev);
+        events.push(ev);
+    }
+    if usize::from(st.day) == nd && nd > 0 {
+        events.push(finish_season(w, &st));
+    }
+    events
+}
 
-    for seg in 0..SEGMENTS {
-        let (d0, d1) = (seg * nd / SEGMENTS, (seg + 1) * nd / SEGMENTS);
-        let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, &out)).collect();
-        let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
-        let mut bat = vec![[BatTotals::default(); LINEUP]; TEAMS];
-        let mut pit = vec![vec![PitchTotals::default(); ROTATION + BULLPEN]; TEAMS];
-        for day in &schedule.days[d0..d1] {
-            let outcomes: Vec<GameOutcome> = day
-                .par_iter()
-                .map(|f| replay_game_with(&w.env, &clubs, f, w.seed, w.year as u32))
-                .collect();
-            for (f, o) in day.iter().zip(&outcomes) {
-                let ids = [usize::from(f.away), usize::from(f.home)];
-                let starters = [usize::from(f.away_starter), usize::from(f.home_starter)];
-                for side in 0..2 {
-                    let t = ids[side];
-                    let other = o.runs[1 - side];
-                    records[t].rs += u32::from(o.runs[side]);
-                    records[t].ra += u32::from(other);
-                    if o.runs[side] > other {
-                        records[t].w += 1;
-                    } else {
-                        records[t].l += 1;
-                    }
-                    for (slot, line) in o.bat[side].iter().enumerate() {
-                        bat[t][slot].add(line);
-                    }
-                    for (i, line) in o.pitch[side].iter().enumerate() {
-                        if line.used {
-                            let staff = clubs[t].staff_index(starters[side], i);
-                            pit[t][staff].add(line);
-                        }
+/// Play days `from..to` of segment `seg`; when `seg_end`, time passes and the
+/// segment's injuries strike.
+fn play_range(
+    w: &World,
+    schedule: &Schedule,
+    st: &InSeason,
+    seg: usize,
+    from: usize,
+    to: usize,
+    seg_end: bool,
+) -> Event {
+    let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, &st.out)).collect();
+    let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
+    let mut bat = vec![[BatTotals::default(); LINEUP]; TEAMS];
+    let mut pit = vec![vec![PitchTotals::default(); ROTATION + BULLPEN]; TEAMS];
+    let mut results = Vec::new();
+    for (offset, day) in schedule.days[from..to].iter().enumerate() {
+        let outcomes: Vec<GameOutcome> = day
+            .par_iter()
+            .map(|f| replay_game_with(&w.env, &clubs, f, w.seed, w.year as u32))
+            .collect();
+        for (f, o) in day.iter().zip(&outcomes) {
+            results.push(GameResult {
+                number: f.number,
+                day: (from + offset) as u16,
+                away: f.away,
+                home: f.home,
+                away_runs: o.runs[0],
+                home_runs: o.runs[1],
+            });
+            let ids = [usize::from(f.away), usize::from(f.home)];
+            let starters = [usize::from(f.away_starter), usize::from(f.home_starter)];
+            for side in 0..2 {
+                let t = ids[side];
+                for (slot, line) in o.bat[side].iter().enumerate() {
+                    bat[t][slot].add(line);
+                }
+                for (i, line) in o.pitch[side].iter().enumerate() {
+                    if line.used {
+                        let staff = clubs[t].staff_index(starters[side], i);
+                        pit[t][staff].add(line);
                     }
                 }
             }
         }
-        for (t, a) in actives.iter().enumerate() {
-            for (slot, id) in a.bats.iter().enumerate() {
-                if let Line::Bat(b) = lines.entry(*id).or_insert(Line::Bat(BatTotals::default())) {
-                    b.merge(&bat[t][slot]);
-                }
-            }
-            for (i, id) in a.staff.iter().enumerate() {
-                if let Line::Pitch(p) = lines
-                    .entry(*id)
-                    .or_insert(Line::Pitch(PitchTotals::default()))
-                {
-                    p.merge(&pit[t][i]);
-                }
+    }
+    let mut lines: BTreeMap<PlayerId, Line> = BTreeMap::new();
+    for (t, a) in actives.iter().enumerate() {
+        for (slot, id) in a.bats.iter().enumerate() {
+            if let Line::Bat(b) = lines.entry(*id).or_insert(Line::Bat(BatTotals::default())) {
+                b.merge(&bat[t][slot]);
             }
         }
+        for (i, id) in a.staff.iter().enumerate() {
+            if let Line::Pitch(p) = lines
+                .entry(*id)
+                .or_insert(Line::Pitch(PitchTotals::default()))
+            {
+                p.merge(&pit[t][i]);
+            }
+        }
+    }
+    let segment_end = seg_end.then(|| {
         // Time passes; then this segment's injuries strike.
-        let days = (d1 - d0) as u16;
+        let days = (schedule.days.len() * (seg + 1) / SEGMENTS
+            - schedule.days.len() * seg / SEGMENTS) as u16;
+        let mut out = st.out.clone();
         for v in out.values_mut() {
             *v = v.saturating_sub(days);
         }
+        let mut loss: BTreeMap<PlayerId, f64> = BTreeMap::new();
+        let mut hurt: Vec<PlayerId> = Vec::new();
+        let mut roll = |p: &Player, out: &mut BTreeMap<PlayerId, u16>| {
+            if out.get(&p.id).copied().unwrap_or(0) > 0 {
+                return;
+            }
+            if let Some((games, l)) = injury_roll(w, seg, p) {
+                out.insert(p.id, games);
+                hurt.push(p.id);
+                if l > 0.0 {
+                    *loss.entry(p.id).or_insert(0.0) += l;
+                }
+            }
+        };
         for a in &actives {
             for id in a.bats.iter().chain(&a.staff) {
-                let p = &w.players[id];
-                if out.get(id).copied().unwrap_or(0) > 0 {
-                    continue;
-                }
-                if let Some((games, l)) = injury_roll(w, seg, p) {
-                    out.insert(*id, games);
-                    hurt_this_year.insert(*id, ());
-                    if l > 0.0 {
-                        *loss.entry(*id).or_insert(0.0) += l;
-                    }
-                }
+                roll(&w.players[id], &mut out);
             }
         }
         // Minor leaguers get hurt too, at the same rates; hurt prospects
@@ -302,27 +341,34 @@ pub(crate) fn play_regular(w: &World) -> Event {
                 if p.level == Level::Majors || playing.contains(id) {
                     continue;
                 }
-                if out.get(id).copied().unwrap_or(0) > 0 {
-                    continue;
-                }
-                if let Some((games, l)) = injury_roll(w, seg, p) {
-                    out.insert(*id, games);
-                    hurt_this_year.insert(*id, ());
-                    if l > 0.0 {
-                        *loss.entry(*id).or_insert(0.0) += l;
-                    }
-                }
+                roll(p, &mut out);
             }
         }
         out.retain(|_, v| *v > 0);
+        SegmentEnd {
+            out,
+            loss: loss.into_iter().collect(),
+            hurt,
+        }
+    });
+    Event::DaysPlayed {
+        year: w.year,
+        to_day: to as u16,
+        results,
+        lines: lines.into_iter().collect(),
+        segment_end,
     }
+}
 
-    let (outs, _) = totals_of(&lines);
-    let total_runs: u32 = records.iter().map(|r| r.rs).sum();
+/// The season's end: lines with their value above replacement, league totals
+/// and everyone hurt during the year or still hurt at its end.
+fn finish_season(w: &World, st: &InSeason) -> Event {
+    let (outs, _) = totals_of(&st.lines);
+    let total_runs: u32 = st.records.iter().map(|r| r.rs).sum();
     let runs_per_out = f64::from(total_runs) / f64::from(outs.max(1));
     let mut league = LeagueLine::default();
-    let mut season_lines = Vec::with_capacity(lines.len());
-    for (id, line) in &lines {
+    let mut season_lines = Vec::with_capacity(st.lines.len());
+    for (id, line) in &st.lines {
         let kind = w.players[id].kind;
         match line {
             Line::Bat(b) => {
@@ -345,24 +391,25 @@ pub(crate) fn play_regular(w: &World) -> Event {
         });
     }
     league.runs = total_runs;
-    league.games = records.iter().map(|r| u32::from(r.w + r.l)).sum();
+    league.games = st.records.iter().map(|r| u32::from(r.w + r.l)).sum();
 
-    // Everyone hurt during the year, or still hurt when it ended.
     let mut injuries = Vec::new();
-    let mut ids: Vec<PlayerId> = hurt_this_year.keys().copied().collect();
-    ids.extend(out.keys().copied());
+    let mut ids: Vec<PlayerId> = st.hurt.iter().copied().collect();
+    ids.extend(st.out.keys().copied());
     ids.sort();
     ids.dedup();
     for id in ids {
         injuries.push(Injury {
             player: id,
-            out_games: out.get(&id).copied().unwrap_or(0),
-            loss: loss.get(&id).copied().unwrap_or(0.0),
+            out_games: st.out.get(&id).copied().unwrap_or(0),
+            loss: st.loss.get(&id).copied().unwrap_or(0.0),
         });
     }
     // Players hurt in an earlier year who healed this one need clearing too.
     for p in w.players.values() {
-        if p.out_games > 0 && !out.contains_key(&p.id) && !injuries.iter().any(|i| i.player == p.id)
+        if p.out_games > 0
+            && !st.out.contains_key(&p.id)
+            && !injuries.iter().any(|i| i.player == p.id)
         {
             injuries.push(Injury {
                 player: p.id,
@@ -375,11 +422,38 @@ pub(crate) fn play_regular(w: &World) -> Event {
 
     Event::SeasonPlayed {
         year: w.year,
-        records,
+        records: st.records.clone(),
         lines: season_lines,
         injuries,
         league,
     }
+}
+
+/// The box score of a game of the season under way (or just finished, until
+/// players progress), played again from the same dice. `None` when the game
+/// has not been played, or when rosters have since been changed by hand so
+/// that it would not come out the same.
+pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
+    let st = w.season.as_ref()?;
+    let r = st.results.iter().find(|r| r.number == number)?;
+    let schedule = Schedule::generate(w.seed, w.year as u32, ROTATION);
+    let nd = schedule.days.len();
+    let seg = segment_of(usize::from(r.day), nd);
+    let out = st.seg_starts.get(seg)?;
+    let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, out)).collect();
+    let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
+    let f = schedule.fixture(number)?;
+    let o = replay_game_with(&w.env, &clubs, f, w.seed, w.year as u32);
+    if o.runs != [r.away_runs, r.home_runs] {
+        return None;
+    }
+    let away = clubs[usize::from(f.away)]
+        .rotation
+        .get(usize::from(f.away_starter))?;
+    let home = clubs[usize::from(f.home)]
+        .rotation
+        .get(usize::from(f.home_starter))?;
+    Some(sim_core::box_score(away, home, &o))
 }
 
 /// Clubs as they stand (injured players excluded), for the playoffs.

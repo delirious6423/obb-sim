@@ -18,5 +18,8 @@ sim-core.workspace = true
 tactics.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

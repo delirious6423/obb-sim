@@ -100,6 +100,24 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - [x] Gate run + reviewer + log entry (exploit-bot check passes after the close-out fixes; see Log)
 - [ ] Final summary to the user (superseded: the user handed over a full roadmap; Phase 5 next)
 
+## Phase 5: UI and saves (in progress)
+
+Gate: a headless scripted test plays whole seasons through the public protocol only, saves, reloads and gets identical results; CI speed benchmarks with a numeric target set after profiling a full season.
+
+Design (decided, 2026-10-11)
+- `host` crate = the protocol (`host::api`: serde `Request`/`Response`, role-filtered views) plus the in-process league host (`Host`) and a threaded client (`LocalClient`: submit, poll, progress, cancel; simulation on a rayon pool of cores-1). The UI depends on `host::api` and `GameClient` only; it never sees `World`. Online play will put the same types on a network.
+- The person is general manager of one club (and sets that club's tactics); owner, commissioner and field-manager seats and the other 29 GMs are built-in. Opponent GMs are `SurplusGm` at the chosen difficulty preset or custom levers; their clubs use the table manager.
+- The season is played in resumable day ranges (`Command::PlayDays`, `Event::DaysPlayed`): the same result however the days are split (tested); rosters are chosen per segment so lineup changes take effect at once. Game results are kept until players progress; box scores are replayed from the same dice (None if rosters were changed by hand since).
+- Saves: `World::snapshot` / `restore` (validated) as JSON inside `storage` (SQLite, one file per slot, manifest sidecar, SHA-256, `.bak`, rotating autosaves, versioned). Events and commands are serialisable (`float_roundtrip` on, so floats survive). No command log is stored beyond the snapshot yet (a save is a snapshot).
+- `data/params.json` (league-wide aggregates, no individual data) is committed and embedded so a clean checkout can run; see THIRD_PARTY.md.
+
+- [x] Serde for events/commands/state; `World::snapshot`/`restore`; day-level season play; box score replay (world)
+- [x] `storage` crate (21 tests)
+- [x] `host` crate: protocol, session, views, threaded client; headless gate test (`crates/host/tests/headless.rs`) PASSES
+- [ ] egui UI (`ui` crate): screens listed in the hand-off
+- [ ] CI speed benchmark with a numeric target after profiling a full season
+- [ ] Reviewer + log entry
+
 ## Draft bands (Phase 3)
 
 Sources (looked up; nothing downloaded into the repo). All count *signed* draftees unless noted; "reached the majors" = at least one major-league appearance or at-bat, measured years after the draft, so the studies are slightly right-censored (late arrivals missing).

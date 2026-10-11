@@ -63,27 +63,27 @@ impl Level {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Contract {
     /// Millions per year.
     pub salary: f64,
     pub years: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Drafted {
     pub year: i32,
     pub pick: u16,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Career {
     /// Seasons with at least one major-league plate appearance or batter faced.
     pub seasons: u16,
     pub war: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Player {
     pub id: PlayerId,
     pub name: String,
@@ -151,7 +151,7 @@ pub fn talent_at(model: &Model, p: &Player, age: i32, era: &Z) -> (Z, f64) {
 }
 
 /// How the amateur pool compares with the people who reach the majors.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Pool {
     /// Spread multiplier over the measured major-league talent spread.
     pub spread: f64,

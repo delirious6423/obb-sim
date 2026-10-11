@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use sim_core::Env;
 use tactics::{DecisionLog, Tables};
 
+use crate::command::{Event, GameResult, Line};
 use crate::player::{Player, PlayerId, Pool};
 use crate::rating::{Model, Z};
 
@@ -44,8 +45,99 @@ pub enum Phase {
     FreeAgency,
 }
 
+/// A regular season partly played.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InSeason {
+    /// Days played.
+    pub day: u16,
+    /// Games each hurt player still has to miss, as of the start of the
+    /// current segment.
+    pub out: BTreeMap<PlayerId, u16>,
+    /// The same, as of the start of each segment played or begun so far (to
+    /// replay a game with the rosters it was played with).
+    pub seg_starts: Vec<BTreeMap<PlayerId, u16>>,
+    pub records: Vec<Record>,
+    /// What each player has done so far.
+    pub lines: BTreeMap<PlayerId, Line>,
+    pub loss: BTreeMap<PlayerId, f64>,
+    pub hurt: BTreeSet<PlayerId>,
+    pub results: Vec<GameResult>,
+}
+
+impl InSeason {
+    /// The start of a season: nobody has played; last year's injuries linger.
+    #[must_use]
+    pub fn start(w: &World) -> Self {
+        let out: BTreeMap<PlayerId, u16> = w
+            .players
+            .values()
+            .filter(|p| p.team.is_some() && p.out_games > 0)
+            .map(|p| (p.id, p.out_games))
+            .collect();
+        Self {
+            day: 0,
+            seg_starts: vec![out.clone()],
+            out,
+            records: vec![Record::default(); w.clubs.len()],
+            lines: BTreeMap::new(),
+            loss: BTreeMap::new(),
+            hurt: BTreeSet::new(),
+            results: Vec::new(),
+        }
+    }
+
+    /// Take in a `DaysPlayed` event.
+    pub fn absorb(&mut self, e: &Event) {
+        let Event::DaysPlayed {
+            to_day,
+            results,
+            lines,
+            segment_end,
+            ..
+        } = e
+        else {
+            return;
+        };
+        for r in results {
+            let (a, h) = (usize::from(r.away), usize::from(r.home));
+            let (ra, rh) = (u32::from(r.away_runs), u32::from(r.home_runs));
+            self.records[a].rs += ra;
+            self.records[a].ra += rh;
+            self.records[h].rs += rh;
+            self.records[h].ra += ra;
+            if ra > rh {
+                self.records[a].w += 1;
+                self.records[h].l += 1;
+            } else {
+                self.records[h].w += 1;
+                self.records[a].l += 1;
+            }
+        }
+        self.results.extend(results.iter().copied());
+        for (id, line) in lines {
+            match (self.lines.get_mut(id), line) {
+                (Some(Line::Bat(a)), Line::Bat(b)) => a.merge(b),
+                (Some(Line::Pitch(a)), Line::Pitch(b)) => a.merge(b),
+                (Some(_), _) => {}
+                (None, l) => {
+                    self.lines.insert(*id, *l);
+                }
+            }
+        }
+        if let Some(s) = segment_end {
+            self.out = s.out.clone();
+            self.seg_starts.push(s.out.clone());
+            for (id, l) in &s.loss {
+                *self.loss.entry(*id).or_insert(0.0) += l;
+            }
+            self.hurt.extend(s.hurt.iter().copied());
+        }
+        self.day = *to_day;
+    }
+}
+
 /// League-wide rules set by the commissioner.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Rules {
     pub payroll_floor: f64,
     pub payroll_cap: f64,
@@ -80,7 +172,7 @@ pub enum Tactics {
     Tables,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClubState {
     pub name: String,
     /// Market size, 1.0 is average.
@@ -98,7 +190,7 @@ pub struct ClubState {
 }
 
 /// A trade one club has put to another and the other has not yet answered.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TradeOffer {
     pub id: u32,
     pub from: u8,
@@ -114,7 +206,7 @@ pub const TRADE_MAX_PER_SIDE: usize = 6;
 /// Open offers one club may have out at a time.
 pub const OFFERS_PER_CLUB: usize = 4;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Draft {
     pub year: i32,
     /// Club on the clock for each pick (amateur rounds, then international).
@@ -124,7 +216,7 @@ pub struct Draft {
     pub remaining: BTreeSet<PlayerId>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SeasonRecord {
     pub year: i32,
     pub records: Vec<Record>,
@@ -134,7 +226,7 @@ pub struct SeasonRecord {
 }
 
 /// League totals for one season (all plate appearances in the majors).
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LeagueLine {
     pub pa: u32,
     pub ab: u32,
@@ -148,7 +240,7 @@ pub struct LeagueLine {
     pub outs: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Finance {
     pub revenue: f64,
     pub payroll: f64,
@@ -182,6 +274,8 @@ pub struct World {
     /// player's talent so the average major leaguer stays at the league
     /// average (see `World::progress`). Moved only by progression events.
     pub era: [Z; 2],
+    /// The regular season so far, while it is being played.
+    pub season: Option<InSeason>,
     pub model: Model,
     pub env: Env,
     /// Run-expectancy and win-probability tables, built from the simulation
@@ -214,10 +308,50 @@ impl PartialEq for World {
             && self.offers == other.offers
             && self.next_offer == other.next_offer
             && self.era == other.era
+            && self.season == other.season
     }
 }
 
 impl World {
+    /// What is wrong with a club's roster for starting a season (nothing, if
+    /// the list is empty): the same rules `SeasonStarted` enforces.
+    #[must_use]
+    pub fn roster_problems(&self, team: u8) -> Vec<String> {
+        use crate::player::Level;
+        use crate::rating::Kind;
+        let mut out = Vec::new();
+        for kind in [Kind::Batter, Kind::Pitcher] {
+            let n = self.kind_count(team, kind, Some(Level::Majors));
+            if n != MAJORS_PER_KIND {
+                out.push(format!(
+                    "{n} {kind:?}s in the majors, needs {MAJORS_PER_KIND}"
+                ));
+            }
+            for level in Level::MINORS {
+                let n = self.kind_count(team, kind, Some(level));
+                if n > level.capacity() {
+                    out.push(format!(
+                        "{n} {kind:?}s at {level:?}, room for {}",
+                        level.capacity()
+                    ));
+                }
+            }
+            let all = self.kind_count(team, kind, None);
+            if all > ROSTER_PER_KIND {
+                out.push(format!(
+                    "{all} {kind:?}s on the roster, limit {ROSTER_PER_KIND}"
+                ));
+            }
+        }
+        out
+    }
+
+    /// The box score of a game of this season, as text (see `play::box_score_text`).
+    #[must_use]
+    pub fn box_score(&self, number: u16) -> Option<String> {
+        crate::play::box_score_text(self, number)
+    }
+
     #[must_use]
     pub fn player(&self, id: PlayerId) -> Option<&Player> {
         self.players.get(&id)
@@ -232,5 +366,132 @@ impl World {
             .filter_map(|id| self.players.get(id))
             .filter_map(|p| p.contract.map(|c| c.salary))
             .sum()
+    }
+}
+
+/// Everything about a league that events change, in a form that can be
+/// stored. The model and environment come from the game parameters and are
+/// supplied again on [`World::restore`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Snapshot {
+    pub seed: u64,
+    pub year: i32,
+    pub phase: Phase,
+    pub rules: Rules,
+    pub pool: Pool,
+    pub clubs: Vec<ClubState>,
+    pub players: BTreeMap<PlayerId, Player>,
+    pub free_agents: BTreeSet<PlayerId>,
+    pub retired: BTreeMap<PlayerId, (Player, i32)>,
+    pub draft: Option<Draft>,
+    pub history: Vec<SeasonRecord>,
+    pub finances: Vec<Vec<Finance>>,
+    pub next_player: u32,
+    pub last_records: Vec<Record>,
+    pub offers: Vec<TradeOffer>,
+    pub next_offer: u32,
+    pub era: [Z; 2],
+    pub season: Option<InSeason>,
+}
+
+impl World {
+    /// The league as it stands, for storage.
+    #[must_use]
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            seed: self.seed,
+            year: self.year,
+            phase: self.phase,
+            rules: self.rules.clone(),
+            pool: self.pool,
+            clubs: self.clubs.clone(),
+            players: self.players.clone(),
+            free_agents: self.free_agents.clone(),
+            retired: self.retired.clone(),
+            draft: self.draft.clone(),
+            history: self.history.clone(),
+            finances: self.finances.clone(),
+            next_player: self.next_player,
+            last_records: self.last_records.clone(),
+            offers: self.offers.clone(),
+            next_offer: self.next_offer,
+            era: self.era,
+            season: self.season.clone(),
+        }
+    }
+
+    /// Rebuild a league from a snapshot and the parameters it was made with.
+    /// Loaded data is never trusted: the snapshot must be consistent.
+    pub fn restore(
+        params: sim_core::GameParams,
+        model: Model,
+        s: Snapshot,
+    ) -> Result<Self, crate::command::WorldError> {
+        use crate::command::WorldError;
+        let bad = |m: &str| Err(WorldError::Invalid(format!("snapshot: {m}")));
+        let mut seen = BTreeSet::new();
+        for (t, c) in s.clubs.iter().enumerate() {
+            for id in &c.players {
+                let Some(p) = s.players.get(id) else {
+                    return bad("a club holds an unknown player");
+                };
+                if p.team != Some(t as u8) || !seen.insert(*id) {
+                    return bad("a player is on the wrong club or on two clubs");
+                }
+            }
+        }
+        for id in &s.free_agents {
+            match s.players.get(id) {
+                Some(p) if p.team.is_none() && seen.insert(*id) => {}
+                _ => return bad("a free agent is unknown, signed or listed twice"),
+            }
+        }
+        if s.players
+            .values()
+            .any(|p| p.team.is_some() && !seen.contains(&p.id))
+        {
+            return bad("a signed player is on no roster");
+        }
+        if s.players.keys().any(|id| id.0 >= s.next_player)
+            || s.retired.keys().any(|id| id.0 >= s.next_player)
+        {
+            return bad("next player id is in use");
+        }
+        if s.phase != Phase::Unfounded
+            && (s.clubs.is_empty()
+                || !(s.finances.is_empty() || s.finances.len() == s.clubs.len())
+                || s.last_records.len() > s.clubs.len())
+        {
+            return bad("club counts do not match");
+        }
+        let finite = |x: f64| x.is_finite();
+        if s.clubs
+            .iter()
+            .any(|c| !(finite(c.cash) && finite(c.budget)))
+            || s.players
+                .values()
+                .any(|p| !(finite(p.quality) && p.z.iter().all(|x| finite(*x))))
+            || s.era.iter().flatten().any(|x| !finite(*x))
+        {
+            return bad("numbers must be finite");
+        }
+        let mut w = World::new(s.seed, params, model, s.pool);
+        w.year = s.year;
+        w.phase = s.phase;
+        w.rules = s.rules;
+        w.clubs = s.clubs;
+        w.players = s.players;
+        w.free_agents = s.free_agents;
+        w.retired = s.retired;
+        w.draft = s.draft;
+        w.history = s.history;
+        w.finances = s.finances;
+        w.next_player = s.next_player;
+        w.last_records = s.last_records;
+        w.offers = s.offers;
+        w.next_offer = s.next_offer;
+        w.era = s.era;
+        w.season = s.season;
+        Ok(w)
     }
 }

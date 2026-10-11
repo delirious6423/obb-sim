@@ -12,7 +12,7 @@ pub fn game_id(season: u32, number: u16) -> u64 {
     (u64::from(season) << 20) | u64::from(number)
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Record {
     pub w: u16,
     pub l: u16,

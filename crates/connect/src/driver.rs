@@ -62,12 +62,17 @@ impl Seats {
     }
 }
 
-fn exec(w: &mut World, log: &mut Vec<Event>, actor: Actor, cmd: Command) -> Result<(), WorldError> {
+pub fn exec(
+    w: &mut World,
+    log: &mut Vec<Event>,
+    actor: Actor,
+    cmd: Command,
+) -> Result<(), WorldError> {
     log.extend(w.execute(&actor, cmd)?);
     Ok(())
 }
 
-fn commissioner_step(
+pub fn commissioner_step(
     w: &mut World,
     seats: &mut Seats,
     log: &mut Vec<Event>,
@@ -86,11 +91,11 @@ fn commissioner_step(
     }
 }
 
-fn team_actor(role: fn(TeamId) -> Actor, team: u8) -> Actor {
+pub fn team_actor(role: fn(TeamId) -> Actor, team: u8) -> Actor {
     role(TeamId(u32::from(team)))
 }
 
-fn refuse(seats: &mut Seats, w: &World, team: u8, seat: &'static str, e: &WorldError) {
+pub fn refuse(seats: &mut Seats, w: &World, team: u8, seat: &'static str, e: &WorldError) {
     seats.violations.push(Violation {
         year: w.year,
         team,
@@ -100,7 +105,7 @@ fn refuse(seats: &mut Seats, w: &World, team: u8, seat: &'static str, e: &WorldE
 }
 
 /// Let each field manager choose this season's tactics.
-fn set_tactics(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
+pub fn set_tactics(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
     for t in 0..TEAMS as u8 {
         let obs = FieldManagerObs {
             team: t,
@@ -164,7 +169,18 @@ pub fn run_year_with(
     commissioner_step(w, seats, log)?; // close the draft
     trade_rounds(w, seats, log);
     free_agency(w, seats, log);
+    roster_stage(w, seats, log, None);
+    start_season(w, seats, log)?;
+    set_tactics(w, seats, log);
+    Ok(())
+}
+
+/// Each club (except `skip`) sets its roster levels.
+pub fn roster_stage(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>, skip: Option<u8>) {
     for t in 0..TEAMS as u8 {
+        if Some(t) == skip {
+            continue;
+        }
         let turn = GmTurn {
             stage: GmStage::Roster,
             obs: GmView::new(w, t).observe(),
@@ -175,15 +191,16 @@ pub fn run_year_with(
             }
         }
     }
-    start_season(w, seats, log)?;
-    set_tactics(w, seats, log);
-    Ok(())
 }
 
 /// Start the season. If rosters are not in order the league office sets the
 /// levels for the clubs, as a built-in general manager would, and the seat
 /// that left them so is on record.
-fn start_season(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) -> Result<(), WorldError> {
+pub fn start_season(
+    w: &mut World,
+    seats: &mut Seats,
+    log: &mut Vec<Event>,
+) -> Result<(), WorldError> {
     let obs = CommissionerObs::new(w);
     let action = seats.commissioner.act(&obs);
     let cmd = action.command();
@@ -243,7 +260,7 @@ fn start_season(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) -> Resul
 }
 
 /// The club on the clock picks; if its answer is refused it passes.
-fn draft_turn(
+pub fn draft_turn(
     w: &mut World,
     seats: &mut Seats,
     log: &mut Vec<Event>,
@@ -276,58 +293,76 @@ fn draft_turn(
 /// Clubs take turns signing one player at a time, starting from a different
 /// club each year, until nobody signs.
 fn free_agency(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
+    while free_agency_round(w, seats, log, None) {}
+}
+
+/// One round of free agency: each club (except `skip`, a club a person runs)
+/// may sign one player. True if anyone signed.
+pub fn free_agency_round(
+    w: &mut World,
+    seats: &mut Seats,
+    log: &mut Vec<Event>,
+    skip: Option<u8>,
+) -> bool {
     let first = (w.year as usize) % TEAMS;
-    loop {
-        let mut signed = false;
-        for k in 0..TEAMS {
-            let team = ((first + k) % TEAMS) as u8;
-            let turn = GmTurn {
-                stage: GmStage::FreeAgency,
-                obs: GmView::new(w, team).observe(),
-            };
-            let Some(a) = seats.gms[usize::from(team)].act(&turn).into_iter().next() else {
-                continue;
-            };
-            match exec(w, log, team_actor(Actor::gm, team), a.command(team)) {
-                Ok(()) => signed = true,
-                Err(e) => refuse(seats, w, team, "general manager", &e),
-            }
+    let mut signed = false;
+    for k in 0..TEAMS {
+        let team = ((first + k) % TEAMS) as u8;
+        if Some(team) == skip {
+            continue;
         }
-        if !signed {
-            break;
+        let turn = GmTurn {
+            stage: GmStage::FreeAgency,
+            obs: GmView::new(w, team).observe(),
+        };
+        let Some(a) = seats.gms[usize::from(team)].act(&turn).into_iter().next() else {
+            continue;
+        };
+        match exec(w, log, team_actor(Actor::gm, team), a.command(team)) {
+            Ok(()) => signed = true,
+            Err(e) => refuse(seats, w, team, "general manager", &e),
         }
     }
+    signed
 }
 
 /// Trading: clubs propose, then answer what was put to them. A few rounds
 /// let counter-offers happen; rounds stop when nobody does anything.
 fn trade_rounds(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
-    if !seats.gms.iter().any(|g| g.trades()) {
-        return;
-    }
-    let first = (w.year as usize) % TEAMS;
     for _ in 0..TRADE_ROUNDS {
-        let mut acted = false;
-        for k in 0..TEAMS {
-            let team = ((first + k) % TEAMS) as u8;
-            if !seats.gms[usize::from(team)].trades() {
-                continue;
-            }
-            let turn = GmTurn {
-                stage: GmStage::Trade,
-                obs: GmView::new(w, team).observe_trades(),
-            };
-            for a in seats.gms[usize::from(team)].act(&turn) {
-                match exec(w, log, team_actor(Actor::gm, team), a.command(team)) {
-                    Ok(()) => acted = true,
-                    Err(e) => refuse(seats, w, team, "general manager", &e),
-                }
-            }
-        }
-        if !acted {
+        if !trade_round(w, seats, log, None) {
             break;
         }
     }
+}
+
+/// One round of trading: each club that trades (except `skip`) answers the
+/// offers put to it and makes its own. True if anyone did anything.
+pub fn trade_round(
+    w: &mut World,
+    seats: &mut Seats,
+    log: &mut Vec<Event>,
+    skip: Option<u8>,
+) -> bool {
+    let first = (w.year as usize) % TEAMS;
+    let mut acted = false;
+    for k in 0..TEAMS {
+        let team = ((first + k) % TEAMS) as u8;
+        if Some(team) == skip || !seats.gms[usize::from(team)].trades() {
+            continue;
+        }
+        let turn = GmTurn {
+            stage: GmStage::Trade,
+            obs: GmView::new(w, team).observe_trades(),
+        };
+        for a in seats.gms[usize::from(team)].act(&turn) {
+            match exec(w, log, team_actor(Actor::gm, team), a.command(team)) {
+                Ok(()) => acted = true,
+                Err(e) => refuse(seats, w, team, "general manager", &e),
+            }
+        }
+    }
+    acted
 }
 
 const TRADE_ROUNDS: usize = 3;

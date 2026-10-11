@@ -70,6 +70,7 @@ impl World {
             offers: Vec::new(),
             next_offer: 0,
             era: [[0.0; crate::rating::K]; 2],
+            season: None,
             model,
             env: sim_core::Env::new(params).expect("valid parameters"),
             tables: Default::default(),
@@ -204,7 +205,14 @@ impl World {
             }
             Command::PlaySeason => {
                 self.need(Phase::Regular)?;
-                Ok(vec![crate::play::play_regular(self)])
+                Ok(crate::play::play_days(self, u16::MAX))
+            }
+            Command::PlayDays { days } => {
+                self.need(Phase::Regular)?;
+                if *days == 0 {
+                    return Err(WorldError::Invalid("play at least one day".into()));
+                }
+                Ok(crate::play::play_days(self, *days))
             }
             Command::PlayPlayoffs => {
                 self.need(Phase::Playoffs)?;
