@@ -98,6 +98,11 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 
 ## Known gaps
 
+- Calibration gate is close to tautological for K/BB/HR (rosters are centred on the target). Run environment (4.70 runs/team/game vs ~4.5 real; ghost runner and universal DH explain part) is printed but not gated. Revisit in Phase 2 when 1,000-season distributions are gated.
+- Errors advance only the batter (and forced runners), not other runners.
+- Walk-off: runs after the winning run can still be credited within the same PA.
+- Ghost runner could in theory still be on base when his turn comes up (not reproduced).
+- cli: Phase 1 viewer is `cli game <seed> --pbp` (no `sim` prefix).
 - `ai` views: `of(league, team)` constructors accept any team id; scoping depends on the caller.
 - `League::from_events` leaves `commands_applied` at 0 (events carry no commands).
 - Role/team binding covers only commands that name teams; commands that name a game or player will need their team resolved from state in `league::permissions::target_teams`.
@@ -105,4 +110,5 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 ## Log
 
 - **Phase 0**: workspace, deterministic sim-core, command/event league, role checks. CI green on ubuntu, macOS, Windows; golden values identical on all three.
+- **Phase 1**: log5 engine, baserunning, fielding, relief, box score/play-by-play; Retrosheet 2015-2019 aggregate tool; calibration crate. Gate PASS on 100k games: K +0.58%, BB -0.44%, HR/PA -0.42% (all within ±3%). Fixed a parser bug (force outs counted batter out) found by sanity check; reviewer found no blockers; fixed bases-loaded double play advancement. CI green on 3 OSes.
 - **Phase 1 tidy-up**: four small commits closing the remaining review gaps (see checklist).

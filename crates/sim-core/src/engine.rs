@@ -365,7 +365,15 @@ impl<S: Sink> Sim<'_, S> {
                                 self.add_out();
                                 self.add_out();
                                 if self.outs < 3 {
-                                    self.ground_out_runners(o, false, false);
+                                    // The runner on second was forced up; with the
+                                    // bases loaded the runner on third was forced home.
+                                    if self.bases[1].is_some() {
+                                        if let Some(r) = self.bases[2].take() {
+                                            self.score(r, true);
+                                        }
+                                        self.bases[2] = self.bases[1].take();
+                                    }
+                                    self.ground_out_runners(o, true, false);
                                 }
                             } else {
                                 self.add_out();
