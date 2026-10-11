@@ -114,9 +114,9 @@ Design (decided, 2026-10-11)
 - [x] Serde for events/commands/state; `World::snapshot`/`restore`; day-level season play; box score replay (world)
 - [x] `storage` crate (21 tests)
 - [x] `host` crate: protocol, session, views, threaded client; headless gate test (`crates/host/tests/headless.rs`) PASSES
-- [ ] egui UI (`ui` crate): screens listed in the hand-off
-- [ ] CI speed benchmark with a numeric target after profiling a full season
-- [ ] Reviewer + log entry
+- [x] egui UI (`ui` crate, bin `game`): new game with difficulty presets and custom levers, home with sim bar (progress, cancel), standings, schedule and box score, roster (sortable), player page, depth chart and tactics, free agents, trades, draft, finances, saves (save, quick save, load, delete), settings, credits. Compiles and starts; NOT yet played through by a person (see Known gaps)
+- [x] CI speed gate: `cargo run --release -p host --example bench -- --check`. Profiled on a development laptop (Apple Silicon, 3 runs): found league 0.70 s, 30 single-day requests 0.11 s, full 2430-game season 0.13 s, offseason (finish, draft, free agency, next season) 0.49 s. Targets about 6x that for shared CI runners: 4.0 / 2.0 / 1.5 / 3.0 s.
+- [ ] Independent reviewer for the finished phase (backend reviewed: findings fixed; UI reviewed: findings fixed) + final check of CI per job
 
 ## Draft bands (Phase 3)
 
@@ -132,6 +132,8 @@ Ranges now in the gate (`crates/world/tests/world_gate.rs`): reach the majors 1-
 Comparison of definitions: the sim's "reached" is at least one season with a plate appearance or batter faced at the majors level, over signed draftees, measured 15+ years after the draft (no censoring); the sim's WAR is runs above a replacement of 0.028 runs/PA over a volume of 650 PA (batters) / 450 BF (pitchers) per 10 runs; the sim's bust uses the FanGraphs rule on seasons with major-league playing time. The sourced 11-30 range (0.58-0.82, pooled 0.71) did not include the first sim value of 0.84, so the model was off and step 2 applied.
 
 ## Known gaps
+
+- (2026-10-11, Phase 5) Review notes not fixed: `from_save` ignores the stored calibration id and engine version (a save from another calibration loads silently); AI general managers are rebuilt fresh on load, so play after a load can differ from an uninterrupted game; `start_next_season` runs its AI rounds before it can refuse; `LocalStore::list` does not show a slot that only has `.bak` files; two autosaves in the same second can pick the same slot; slot names collide by case on macOS/Windows. The UI has no graphical test (only compile, clippy, a start-up run and the protocol gate); the Player screen's Back button always goes to Roster.
 
 - (2026-10-11) `trading_happens` only prints counts and asserts nothing; with the stronger reference it printed 3 proposed, 0 accepted in one 5-year run. Trade volume needs a real behaviour check (Phase 4b item, "behavior checks against real baseball").
 - (2026-10-11) Runs/team-game in the world runs at about 5.0 vs the DH-equivalent target 4.70 (+7%, inside the +-10% world band).
