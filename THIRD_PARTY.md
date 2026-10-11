@@ -34,7 +34,7 @@ Licenses above are the crates' published licenses; re-check with `cargo deny` be
 
 ## Licence audit (2026-10-11, Phase 6)
 
-`python3 tools/licenses.py` lists the licence of each external crate in `Cargo.lock` (455 crates at this date) and fails on a crate with no permissive option. Result: every crate offers MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, Unicode-3.0 or BSL-1.0 terms. Three crates are dual-licensed with a copyleft alternative; we use them under the permissive option: `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later), `self_cell` (Apache-2.0 OR GPL-2.0-only). No crate is used under GPL/LGPL terms.
+`python3 tools/licenses.py` lists the licence of each external crate in `Cargo.lock` (455 crates at this date) and fails on a crate with no permissive option. Result: every crate offers MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, Unicode-3.0 or BSL-1.0 terms. Two crates (three `Cargo.lock` entries) are dual-licensed with a copyleft alternative; we use them under the permissive option: `r-efi` (two versions; MIT OR Apache-2.0 OR LGPL-2.1-or-later), `self_cell` (Apache-2.0 OR GPL-2.0-only). No crate is used under GPL/LGPL terms.
 
 Fonts: `epaint` (via egui) embeds default fonts under the SIL OFL 1.1 and the Ubuntu Font Licence (crate licence expression `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0`). Their notices are in the Credits screen.
 

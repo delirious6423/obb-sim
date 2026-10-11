@@ -17,5 +17,5 @@ exe=target/release/game
 rm -rf dist
 mkdir -p dist
 cp "$exe" dist/
-cp README.md THIRD_PARTY.md dist/ 2>/dev/null || true
+cp README.md THIRD_PARTY.md dist/
 echo "built: dist/$(basename "$exe")"

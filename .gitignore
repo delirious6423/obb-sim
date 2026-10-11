@@ -13,3 +13,4 @@
 
 # Internal calibration data (never commit)
 /data/internal/
+/dist
