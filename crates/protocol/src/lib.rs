@@ -131,9 +131,35 @@ pub struct LoggedCommand {
 }
 
 /// Append-only record of accepted commands. Replaying it rebuilds the league.
+///
+/// Deserializing checks that each entry's `seq` equals its index.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawCommandLog")]
 pub struct CommandLog {
     entries: Vec<LoggedCommand>,
+}
+
+#[derive(Deserialize)]
+struct RawCommandLog {
+    entries: Vec<LoggedCommand>,
+}
+
+impl TryFrom<RawCommandLog> for CommandLog {
+    type Error = String;
+
+    fn try_from(raw: RawCommandLog) -> Result<Self, String> {
+        for (i, entry) in raw.entries.iter().enumerate() {
+            if u64::try_from(i).ok() != Some(entry.seq) {
+                return Err(format!(
+                    "log entry {i} has seq {}; seq must equal the index",
+                    entry.seq
+                ));
+            }
+        }
+        Ok(Self {
+            entries: raw.entries,
+        })
+    }
 }
 
 impl CommandLog {

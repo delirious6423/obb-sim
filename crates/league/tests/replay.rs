@@ -70,10 +70,16 @@ fn replay_of_events_rebuilds_identical_state() {
     for (actor, command) in script() {
         events.extend(session.submit(actor, command).expect("accepted"));
     }
-    assert_eq!(
-        &League::from_events(SEED, &events).expect("valid events"),
-        session.league()
-    );
+    // `from_events` sees events, not commands, so its `commands_applied` is 0.
+    // Everything else must match, so compare with that one field set aside.
+    let strip = |l: &League| {
+        let mut v = serde_json::to_value(l).unwrap();
+        v.as_object_mut().unwrap().remove("commands_applied");
+        v
+    };
+    let rebuilt = League::from_events(SEED, &events).expect("valid events");
+    assert_eq!(rebuilt.commands_applied(), 0);
+    assert_eq!(strip(&rebuilt), strip(session.league()));
 }
 
 #[test]
@@ -161,4 +167,34 @@ fn snapshot_ahead_of_log_is_refused() {
     snapshot.applied += 1;
     let err = Session::resume(snapshot, live.log()).unwrap_err();
     assert!(matches!(err, LeagueError::SnapshotAheadOfLog { .. }));
+}
+
+#[test]
+fn snapshot_whose_applied_disagrees_with_its_state_is_refused() {
+    let live = run(script());
+    let mut snapshot = live.snapshot();
+    assert_eq!(snapshot.applied, snapshot.state.commands_applied());
+    // Stale: claims fewer commands than the state holds, so the tail would be
+    // replayed onto a state that already includes it.
+    snapshot.applied -= 3;
+    let err = Session::resume(snapshot, live.log()).unwrap_err();
+    assert_eq!(
+        err,
+        LeagueError::SnapshotMismatch {
+            applied: 7,
+            state_applied: 10
+        }
+    );
+}
+
+#[test]
+fn log_with_a_wrong_seq_is_refused_on_load() {
+    let live = run(script());
+    let mut v = serde_json::to_value(live.log()).unwrap();
+    assert_eq!(v.pointer("/entries/4/seq"), Some(&4.into()));
+    v["entries"][4]["seq"] = 9.into();
+    let err = serde_json::from_value::<protocol::CommandLog>(v)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("seq must equal the index"), "{err}");
 }

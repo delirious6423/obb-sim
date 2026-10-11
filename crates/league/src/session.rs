@@ -69,6 +69,13 @@ impl Session {
                 log_len,
             });
         }
+        let state_applied = snapshot.state.commands_applied();
+        if snapshot.applied != state_applied {
+            return Err(LeagueError::SnapshotMismatch {
+                applied: snapshot.applied,
+                state_applied,
+            });
+        }
         let mut league = snapshot.state;
         for entry in log.since(snapshot.applied) {
             league.execute(&entry.actor, &entry.command)?;

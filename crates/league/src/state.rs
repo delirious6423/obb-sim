@@ -57,6 +57,8 @@ pub enum LeagueError {
     IdSpaceExhausted(&'static str),
     #[error("snapshot covers {applied} commands but the log has only {log_len}")]
     SnapshotAheadOfLog { applied: u64, log_len: u64 },
+    #[error("snapshot says {applied} commands applied but its state says {state_applied}")]
+    SnapshotMismatch { applied: u64, state_applied: u64 },
     #[error("corrupt league data: {0}")]
     Corrupt(&'static str),
 }
@@ -76,6 +78,10 @@ pub struct League {
     next_team: u32,
     next_player: u32,
     next_game: u32,
+    // Bookkeeping, not league state: `execute` bumps this directly instead of
+    // going through an event so a snapshot's `applied` can be checked against
+    // the state it carries. Events describe the league, not how it was driven.
+    commands_applied: u64,
 }
 
 /// Unvalidated shape of [`League`] used only while deserializing.
@@ -88,6 +94,7 @@ struct RawLeague {
     next_team: u32,
     next_player: u32,
     next_game: u32,
+    commands_applied: u64,
 }
 
 impl TryFrom<RawLeague> for League {
@@ -102,6 +109,7 @@ impl TryFrom<RawLeague> for League {
             next_team: raw.next_team,
             next_player: raw.next_player,
             next_game: raw.next_game,
+            commands_applied: raw.commands_applied,
         };
         league.validate()?;
         Ok(league)
@@ -119,12 +127,20 @@ impl League {
             next_team: 0,
             next_player: 0,
             next_game: 0,
+            commands_applied: 0,
         }
     }
 
     #[must_use]
     pub fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// How many commands `execute` has accepted. Zero for a league rebuilt
+    /// with `from_events`, since events carry no commands.
+    #[must_use]
+    pub fn commands_applied(&self) -> u64 {
+        self.commands_applied
     }
 
     pub fn teams(&self) -> impl Iterator<Item = &Team> {
@@ -206,6 +222,7 @@ impl League {
         for event in &events {
             self.apply(event)?;
         }
+        self.commands_applied = self.commands_applied.saturating_add(1);
         Ok(events)
     }
 
