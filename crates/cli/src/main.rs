@@ -3,7 +3,9 @@
 //! - no arguments: the Phase 0 demo (tiny league, replay check)
 //! - `game [seed] [--pbp]`: one game
 //! - `season`, `box`, `player`, `bench`: see `season_cmds`
+//! - `roster export|import`: see `roster`
 
+mod roster;
 mod season_cmds;
 
 use league::Session;
@@ -44,6 +46,16 @@ fn main() {
             if let Err(message) = season_cmds::run(&args) {
                 eprintln!("{message}");
                 std::process::exit(2);
+            }
+            return;
+        }
+        Some("roster") => {
+            match roster::run(&args[1..]) {
+                Ok(message) => println!("{message}"),
+                Err(message) => {
+                    eprintln!("{message}");
+                    std::process::exit(2);
+                }
             }
             return;
         }

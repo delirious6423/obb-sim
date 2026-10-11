@@ -632,11 +632,17 @@ name = "cli"
 version = "0.0.0"
 dependencies = [
  "calibration",
+ "host",
  "league",
  "protocol",
  "rayon",
  "season",
+ "serde",
+ "serde_json",
  "sim-core",
+ "storage",
+ "tempfile",
+ "world",
 ]
 
 [[package]]
