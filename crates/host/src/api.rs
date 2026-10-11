@@ -20,6 +20,73 @@ pub struct NewGame {
     /// Seasons played out before the first one is shown, so the league has
     /// a past (no games, only offseasons).
     pub burn_in_years: u8,
+    /// The seats the person holds. Old saves and clients that leave this
+    /// out get the general manager seat only.
+    #[serde(default)]
+    pub roles: Roles,
+}
+
+/// The seats one person holds. At least one must be true.
+///
+/// A seat the person does not hold is played by an AI agent. Without the
+/// general manager seat the person's club is run by the AI, and the owner
+/// and commissioner actions are refused unless their seat is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Roles {
+    /// Runs one club: roster, draft, trades and free agency.
+    #[serde(default = "yes")]
+    pub gm: bool,
+    /// Owns one club: budget, ticket, stadium and stance.
+    #[serde(default)]
+    pub owner: bool,
+    /// Runs the league: rules and revenue sharing.
+    #[serde(default)]
+    pub commissioner: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Roles {
+    fn default() -> Self {
+        Self {
+            gm: true,
+            owner: false,
+            commissioner: false,
+        }
+    }
+}
+
+impl Roles {
+    /// Whether at least one seat is held.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.gm || self.owner || self.commissioner
+    }
+}
+
+/// An owner's or the general manager's ballpark stance (how the club builds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Stance {
+    Contend,
+    Balanced,
+    Rebuild,
+}
+
+/// The league rules as a commissioner sets them.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RulesView {
+    /// Payroll floor, millions.
+    pub payroll_floor: f64,
+    /// Payroll cap, millions.
+    pub payroll_cap: f64,
+    /// Share of local revenue pooled and shared (0..0.4).
+    pub revenue_sharing: f64,
+    /// Millions paid per win above replacement (2..9).
+    pub war_price: f64,
+    pub draft_rounds: u16,
+    pub international_rounds: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +209,26 @@ pub enum Action {
     },
     /// Put the roster in order the way the club's staff would.
     AutoRoster,
+    /// Owner: the payroll budget for the club (kept within the rules).
+    SetBudget {
+        payroll: f64,
+    },
+    /// Owner: the average ticket price, dollars.
+    SetTicketPrice {
+        price: f64,
+    },
+    /// Owner: spend this many millions on the ballpark (seats and quality).
+    BuildStadium {
+        amount: f64,
+    },
+    /// Owner: how the club builds (contend now, balanced, or rebuild).
+    SetStance {
+        stance: Stance,
+    },
+    /// Commissioner: set the league rules. Checked against the rule limits.
+    SetRules {
+        rules: RulesView,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -191,6 +278,11 @@ pub enum Request {
     DraftBoard,
     Finances,
     Trades,
+    /// The owner's desk for the person's club (owner seat only).
+    OwnerDesk,
+    /// The league office: rules and every club's books (commissioner seat
+    /// only).
+    LeagueOffice,
     Advance(Advance),
     Act(Action),
 }
@@ -211,6 +303,8 @@ pub enum Response {
     Draft(DraftView),
     Finances(FinancesView),
     Trades(TradeView),
+    Owner(OwnerView),
+    League(LeagueView),
     Saves(Vec<SaveInfo>),
 }
 
@@ -244,6 +338,8 @@ pub struct Overview {
     pub difficulty: String,
     /// Messages since the last overview (roster fixes, deals, notices).
     pub notices: Vec<String>,
+    /// The seats the person holds.
+    pub roles: Roles,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -360,6 +456,12 @@ pub struct FinanceRow {
     pub other: f64,
     pub spent: f64,
     pub dividend: f64,
+    /// Average crowd per home game, thousands.
+    #[serde(default)]
+    pub attendance: f64,
+    /// Gate receipts.
+    #[serde(default)]
+    pub gate: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -374,6 +476,103 @@ pub struct FinancesView {
     pub history: Vec<FinanceRow>,
     /// Every contract on the books.
     pub contracts: Vec<PlayerRow>,
+}
+
+/// The ballpark as the owner sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct StadiumView {
+    /// Seats, thousands.
+    pub capacity_k: f64,
+    /// Demand multiplier (1.0 is an ordinary park).
+    pub quality: f64,
+    /// Average ticket price, dollars.
+    pub ticket: f64,
+}
+
+/// One season in the owner's history.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnerHistoryRow {
+    pub year: i32,
+    /// Average crowd per home game, thousands.
+    pub attendance: f64,
+    pub gate: f64,
+    pub revenue: f64,
+    pub payroll: f64,
+}
+
+/// The owner's desk for the person's club.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnerView {
+    pub club_name: String,
+    pub year: i32,
+    pub stage: Stage,
+    /// Whether the owner's actions are open now.
+    pub can_act: bool,
+    /// Payroll budget, millions.
+    pub budget: f64,
+    pub payroll: f64,
+    pub cash: f64,
+    pub revenue_prev: f64,
+    pub stadium: StadiumView,
+    /// Last season's average crowd per home game, thousands.
+    pub attendance_prev: f64,
+    pub gate_prev: f64,
+    /// Whether last season's crowd filled the park.
+    pub sold_out: bool,
+    /// The ticket price the club's books suggest, dollars.
+    pub suggested_ticket: f64,
+    /// Lowest and highest ticket price allowed, dollars.
+    pub ticket_range: (f64, f64),
+    /// What a stadium build costs, in words (seats and quality per million).
+    pub build_cost: String,
+    pub stance: Stance,
+    /// Past seasons, oldest first.
+    pub history: Vec<OwnerHistoryRow>,
+}
+
+/// The limits a commissioner works within.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RuleLimits {
+    /// Payroll floor range, millions.
+    pub payroll_floor: (f64, f64),
+    /// Payroll cap range, millions (the low end is the floor plus 40).
+    pub payroll_cap: (f64, f64),
+    pub revenue_sharing: (f64, f64),
+    pub war_price: (f64, f64),
+}
+
+/// One club's public books, as the league office sees them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClubBooksRow {
+    pub club: Club,
+    pub name: String,
+    pub market: f64,
+    pub payroll: f64,
+    pub cash: f64,
+    pub revenue_prev: f64,
+    pub ticket: f64,
+    pub attendance_prev: f64,
+    pub budget: f64,
+}
+
+/// The league office (commissioner only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeagueView {
+    pub year: i32,
+    pub stage: Stage,
+    pub rules: RulesView,
+    pub limits: RuleLimits,
+    /// Whether the rules may be changed now.
+    pub can_act: bool,
+    pub clubs: Vec<ClubBooksRow>,
+    /// Totals across all clubs: payroll, revenue (last season), cash.
+    pub total_payroll: f64,
+    pub total_revenue_prev: f64,
+    pub total_cash: f64,
+    pub median_payroll: f64,
+    pub median_cash: f64,
+    /// Clubs with negative cash (running on the credit line).
+    pub low_cash: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

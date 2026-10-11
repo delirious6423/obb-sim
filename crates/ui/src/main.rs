@@ -16,6 +16,7 @@ fn self_test() -> Result<(), String> {
         club: 0,
         difficulty: Difficulty::Preset(Preset::Rookie),
         burn_in_years: 0,
+        roles: Default::default(),
     });
     for req in [
         new,

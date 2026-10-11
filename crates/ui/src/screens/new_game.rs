@@ -130,6 +130,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     club: app.state.pick_club,
                     difficulty,
                     burn_in_years: app.state.burn_in,
+                    roles: Default::default(),
                 }),
                 Tag::Start,
             );

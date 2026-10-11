@@ -446,6 +446,7 @@ mod tests {
             club: 0,
             difficulty: Difficulty::Preset(Preset::Veteran),
             burn_in_years: 0,
+            roles: Default::default(),
         };
         let mut host = Host::new_game(&cal, &game)
             .unwrap()

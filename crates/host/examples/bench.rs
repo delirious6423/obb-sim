@@ -34,6 +34,7 @@ fn main() {
         club: 3,
         difficulty: Difficulty::Preset(Preset::Veteran),
         burn_in_years: 2,
+        roles: Default::default(),
     })));
     times.push(("found", t.elapsed().as_secs_f64()));
 

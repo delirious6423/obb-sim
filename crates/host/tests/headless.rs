@@ -38,6 +38,7 @@ fn new_game(c: &impl GameClient) {
         club: 4,
         difficulty: Difficulty::Preset(Preset::Veteran),
         burn_in_years: 2,
+        roles: Default::default(),
     })));
 }
 

@@ -3,14 +3,15 @@
 //! public; true talent is never read.
 
 use season::{Schedule, division_of, league_of};
-use world::agents::{GmView, Seen};
+use world::agents::{ClubBooks, GmView, LeagueObs, OwnerObs, Seen, owner_ticket_for};
 use world::player::{Level as WLevel, Origin, Player, PlayerId};
 use world::rating::Kind;
-use world::state::{Phase, TEAMS, World};
+use world::state::{Phase, Rules, Stance as WStance, TEAMS, TICKET_RANGE, World};
 
 use crate::api::{
-    Division, DraftView, FinanceRow, FinancesView, GameRow, Level, OfferView, PlayerRow,
-    PlayerView, Position, RosterView, ScheduleView, StandingRow, Standings, TradeView,
+    ClubBooksRow, Division, DraftView, FinanceRow, FinancesView, GameRow, LeagueView, Level,
+    OfferView, OwnerHistoryRow, OwnerView, PlayerRow, PlayerView, Position, RosterView, RuleLimits,
+    RulesView, ScheduleView, StadiumView, Stage, Stance, StandingRow, Standings, TradeView,
 };
 
 pub(crate) fn level(l: WLevel) -> Level {
@@ -350,6 +351,8 @@ pub(crate) fn finances(w: &World, me: u8) -> FinancesView {
                     other: x.other,
                     spent: x.spent,
                     dividend: x.dividend,
+                    attendance: x.attendance,
+                    gate: x.gate,
                 })
                 .collect()
         })
@@ -416,5 +419,145 @@ pub(crate) fn trades(w: &World, me: u8) -> TradeView {
         incoming,
         outgoing,
         market,
+    }
+}
+
+pub(crate) fn stance_view(s: WStance) -> Stance {
+    match s {
+        WStance::Contend => Stance::Contend,
+        WStance::Balanced => Stance::Balanced,
+        WStance::Rebuild => Stance::Rebuild,
+    }
+}
+
+pub(crate) fn stance_world(s: Stance) -> WStance {
+    match s {
+        Stance::Contend => WStance::Contend,
+        Stance::Balanced => WStance::Balanced,
+        Stance::Rebuild => WStance::Rebuild,
+    }
+}
+
+pub(crate) fn rules_view(r: &Rules) -> RulesView {
+    RulesView {
+        payroll_floor: r.payroll_floor,
+        payroll_cap: r.payroll_cap,
+        revenue_sharing: r.revenue_sharing,
+        war_price: r.war_price,
+        draft_rounds: r.draft_rounds,
+        international_rounds: r.international_rounds,
+    }
+}
+
+pub(crate) fn rules_world(v: &RulesView) -> Rules {
+    Rules {
+        payroll_floor: v.payroll_floor,
+        payroll_cap: v.payroll_cap,
+        revenue_sharing: v.revenue_sharing,
+        war_price: v.war_price,
+        draft_rounds: v.draft_rounds,
+        international_rounds: v.international_rounds,
+    }
+}
+
+/// The owner's desk for one club.
+pub(crate) fn owner_desk(w: &World, me: u8, stage: Stage, can_act: bool) -> OwnerView {
+    let c = &w.clubs[usize::from(me)];
+    let o = OwnerObs::new(w, me);
+    let history = w
+        .finances
+        .get(usize::from(me))
+        .map(|f| {
+            f.iter()
+                .enumerate()
+                .map(|(i, x)| OwnerHistoryRow {
+                    year: w.history.get(i).map_or(w.year, |h| h.year),
+                    attendance: x.attendance,
+                    gate: x.gate,
+                    revenue: x.revenue,
+                    payroll: x.payroll,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    OwnerView {
+        club_name: c.name.clone(),
+        year: w.year,
+        stage,
+        can_act,
+        budget: c.budget,
+        payroll: w.payroll(usize::from(me)),
+        cash: c.cash,
+        revenue_prev: c.revenue_prev,
+        stadium: StadiumView {
+            capacity_k: c.stadium.capacity,
+            quality: c.stadium.quality,
+            ticket: c.stadium.ticket,
+        },
+        attendance_prev: o.attendance_prev,
+        gate_prev: o.gate_prev,
+        sold_out: o.sold_out(),
+        suggested_ticket: owner_ticket_for(&o),
+        ticket_range: TICKET_RANGE,
+        build_cost: "each $1M adds 0.05k seats and 1/600 quality, on credit (the line is 25M)"
+            .into(),
+        stance: stance_view(c.stance),
+        history,
+    }
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    }
+}
+
+/// The league office: the rules and every club's public books.
+pub(crate) fn league_office(w: &World, stage: Stage, can_act: bool) -> LeagueView {
+    let l = LeagueObs::new(w);
+    let books: Vec<ClubBooksRow> = l
+        .clubs
+        .iter()
+        .map(|b: &ClubBooks| {
+            let t = usize::from(b.team);
+            let c = &w.clubs[t];
+            ClubBooksRow {
+                club: b.team,
+                name: c.name.clone(),
+                market: b.market,
+                payroll: b.payroll,
+                cash: b.cash,
+                revenue_prev: b.revenue_prev,
+                ticket: c.stadium.ticket,
+                attendance_prev: w.finances[t].last().map_or(0.0, |f| f.attendance),
+                budget: c.budget,
+            }
+        })
+        .collect();
+    LeagueView {
+        year: w.year,
+        stage,
+        rules: rules_view(&w.rules),
+        limits: RuleLimits {
+            payroll_floor: (40.0, 140.0),
+            payroll_cap: (w.rules.payroll_floor + 40.0, 420.0),
+            revenue_sharing: (0.0, 0.4),
+            war_price: (2.0, 9.0),
+        },
+        can_act,
+        total_payroll: books.iter().map(|b| b.payroll).sum(),
+        total_revenue_prev: books.iter().map(|b| b.revenue_prev).sum(),
+        total_cash: books.iter().map(|b| b.cash).sum(),
+        median_payroll: median(books.iter().map(|b| b.payroll).collect()),
+        median_cash: median(books.iter().map(|b| b.cash).collect()),
+        low_cash: books.iter().filter(|b| b.cash < 0.0).count(),
+        clubs: books,
     }
 }

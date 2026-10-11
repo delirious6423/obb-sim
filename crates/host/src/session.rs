@@ -21,13 +21,12 @@ use world::rating::Model;
 use world::state::{Phase, TEAMS, Tactics, World};
 
 use crate::api::{
-    Action, Advance, Difficulty, NewGame, Overview, Preset, Progress, Request, Response, SaveInfo,
-    Stage,
+    Action, Advance, Difficulty, NewGame, Overview, Preset, Progress, Request, Response, Roles,
+    SaveInfo, Stage,
 };
 use crate::{difficulty, views};
 
 const LEAGUE_NAME: &str = "The Fictional League";
-const ROLE: &str = "General Manager";
 const ENGINE_VERSION: &str = concat!("sim ", env!("CARGO_PKG_VERSION"), " / rules 1");
 /// Days played per step of a long simulation: progress is reported and
 /// cancellation is checked between steps.
@@ -78,6 +77,8 @@ pub struct Host {
     seats: Seats,
     /// The club the person runs.
     club: u8,
+    /// Which seats the person holds (the rest are AI).
+    roles: Roles,
     difficulty: Difficulty,
     smart_tactics: bool,
     store: Option<LocalStore>,
@@ -85,7 +86,7 @@ pub struct Host {
     pub control: Arc<Control>,
 }
 
-fn ai_seats(w_seed: u64, club: u8, d: &Difficulty, burn_in: u8) -> Seats {
+fn ai_seats(w_seed: u64, club: u8, d: &Difficulty, burn_in: u8, roles: Roles) -> Seats {
     let profile = difficulty::profile(d);
     Seats::fill(
         Box::new(BuiltInCommissioner {
@@ -93,7 +94,7 @@ fn ai_seats(w_seed: u64, club: u8, d: &Difficulty, burn_in: u8) -> Seats {
         }),
         |_| Box::new(BuiltInOwner),
         |t| -> Box<dyn GmAgent> {
-            if t == club {
+            if t == club && roles.gm {
                 // The person decides; this seat is skipped by every round.
                 Box::new(BuiltInGm)
             } else {
@@ -116,6 +117,21 @@ fn gm_actor(club: u8) -> Actor {
     team_actor(Actor::gm, club)
 }
 
+/// The title the person holds, for the save list and the welcome notice.
+fn role_title(r: &Roles) -> String {
+    let mut parts = Vec::new();
+    if r.gm {
+        parts.push("General Manager");
+    }
+    if r.owner {
+        parts.push("Owner");
+    }
+    if r.commissioner {
+        parts.push("Commissioner");
+    }
+    parts.join(" and ")
+}
+
 impl Host {
     /// Found a new league.
     ///
@@ -125,9 +141,12 @@ impl Host {
         if usize::from(g.club) >= TEAMS {
             return Err("no such club".into());
         }
+        if !g.roles.any() {
+            return Err("the person must hold at least one role".into());
+        }
         let model = Model::from_calibration(cal);
         let mut world = World::new(g.seed, cal.params, model, DEFAULT_POOL);
-        let mut seats = ai_seats(g.seed, g.club, &g.difficulty, g.burn_in_years);
+        let mut seats = ai_seats(g.seed, g.club, &g.difficulty, g.burn_in_years, g.roles);
         let mut log = Vec::new();
         start_with(&mut world, &mut seats, &mut log).map_err(|e| e.to_string())?;
         let mut h = Self {
@@ -135,6 +154,7 @@ impl Host {
             world,
             seats,
             club: g.club,
+            roles: g.roles,
             difficulty: g.difficulty.clone(),
             smart_tactics: false,
             store: None,
@@ -142,10 +162,17 @@ impl Host {
             control: Arc::default(),
         };
         h.notices.push(format!(
-            "Welcome. You run the {} as general manager.",
-            h.world.clubs[usize::from(g.club)].name
+            "Welcome. You run the {} as {}.",
+            h.world.clubs[usize::from(g.club)].name,
+            role_title(&g.roles)
         ));
         Ok(h)
+    }
+
+    /// The club the general manager seat skips in the league-wide rounds.
+    /// Without that seat the AI runs the club too.
+    fn skip(&self) -> Option<u8> {
+        self.roles.gm.then_some(self.club)
     }
 
     /// Keep saves in this folder.
@@ -236,6 +263,23 @@ impl Host {
             }
             Request::DraftBoard => Response::Draft(views::draft(w, me)),
             Request::Finances => Response::Finances(views::finances(w, me)),
+            Request::OwnerDesk => {
+                if !self.roles.owner {
+                    return Response::Failed("you do not hold the owner role".into());
+                }
+                let can_act = matches!(
+                    w.phase,
+                    Phase::Offseason | Phase::Progressed | Phase::Drafting | Phase::FreeAgency
+                );
+                Response::Owner(views::owner_desk(w, me, self.stage(), can_act))
+            }
+            Request::LeagueOffice => {
+                if !self.roles.commissioner {
+                    return Response::Failed("you do not hold the commissioner role".into());
+                }
+                let can_act = matches!(w.phase, Phase::Offseason | Phase::Progressed);
+                Response::League(views::league_office(w, self.stage(), can_act))
+            }
             Request::Trades => Response::Trades(views::trades(w, me)),
             Request::Act(a) => self.act(a),
             Request::Advance(a) => self.advance(a),
@@ -293,10 +337,12 @@ impl Host {
                 }
             }
             Stage::Playoffs | Stage::Offseason => {
-                advance.push((
-                    Advance::FinishSeason,
-                    "Play the playoffs, then on to the draft".to_string(),
-                ));
+                let label = if w.phase == Phase::Offseason && self.office_open() {
+                    "Close the books, then on to the draft"
+                } else {
+                    "Play the playoffs, then on to the draft"
+                };
+                advance.push((Advance::FinishSeason, label.to_string()));
             }
             Stage::Draft => {
                 advance.push((Advance::SimDraft, "Let the other clubs pick".to_string()));
@@ -322,6 +368,7 @@ impl Host {
             stage: self.stage(),
             club: self.club,
             club_name: w.clubs[me].name.clone(),
+            roles: self.roles,
             day: st.map_or(0, |s| s.day),
             days: if self.stage() == Stage::Season {
                 self.days()
@@ -341,8 +388,59 @@ impl Host {
         }
     }
 
+    /// Owner actions: refused unless the owner seat is held.
+    fn owner_act(&mut self, cmd: Command) -> Response {
+        if !self.roles.owner {
+            return Response::Failed("you do not hold the owner role".into());
+        }
+        let actor = team_actor(Actor::owner, self.club);
+        match self.world.execute(&actor, cmd) {
+            Ok(_) => Response::Done(String::new()),
+            Err(e) => Response::Failed(e.to_string()),
+        }
+    }
+
+    /// Commissioner actions: refused unless the commissioner seat is held.
+    fn commissioner_act(&mut self, cmd: Command) -> Response {
+        if !self.roles.commissioner {
+            return Response::Failed("you do not hold the commissioner role".into());
+        }
+        match self.commissioner(cmd) {
+            Ok(_) => Response::Done(String::new()),
+            Err(e) => Response::Failed(e),
+        }
+    }
+
     fn act(&mut self, a: Action) -> Response {
         let me = self.club;
+        let a = match a {
+            Action::SetBudget { payroll } => {
+                return self.owner_act(Command::SetBudget { team: me, payroll });
+            }
+            Action::SetTicketPrice { price } => {
+                return self.owner_act(Command::SetTicketPrice { team: me, price });
+            }
+            Action::BuildStadium { amount } => {
+                return self.owner_act(Command::BuildStadium { team: me, amount });
+            }
+            Action::SetStance { stance } => {
+                return self.owner_act(Command::SetStance {
+                    team: me,
+                    stance: views::stance_world(stance),
+                });
+            }
+            Action::SetRules { rules } => {
+                return self.commissioner_act(Command::SetRules {
+                    rules: views::rules_world(&rules),
+                });
+            }
+            other => other,
+        };
+        // Every other action is a general manager's, except tactics, which
+        // belong to the field manager.
+        if !self.roles.gm && !matches!(a, Action::SetTactics { .. }) {
+            return Response::Failed("you do not hold the general manager role".into());
+        }
         let cmd = match a {
             Action::SetLevel { player, level } => Command::SetLevel {
                 team: me,
@@ -398,6 +496,11 @@ impl Host {
                 }
             }
             Action::AutoRoster => return self.auto_roster(),
+            Action::SetBudget { .. }
+            | Action::SetTicketPrice { .. }
+            | Action::BuildStadium { .. }
+            | Action::SetStance { .. }
+            | Action::SetRules { .. } => unreachable!("handled above"),
         };
         let actor = match &cmd {
             Command::SetTactics { .. } => team_actor(Actor::field_manager, me),
@@ -437,24 +540,33 @@ impl Host {
             Advance::FinishSeason => self.finish_season(&ctl),
             Advance::SimDraft => self.sim_draft(&ctl),
             Advance::TradeRound => {
-                let mut log = Vec::new();
-                let acted =
-                    trade_round(&mut self.world, &mut self.seats, &mut log, Some(self.club));
-                Ok(if acted {
-                    "The other clubs traded".to_string()
+                if self.world.phase != Phase::FreeAgency {
+                    Err("trade talks are held in free agency".into())
                 } else {
-                    "Nothing happened".to_string()
-                })
+                    let mut log = Vec::new();
+                    let skip = self.skip();
+                    let acted = trade_round(&mut self.world, &mut self.seats, &mut log, skip);
+                    Ok(if acted {
+                        "The other clubs traded".to_string()
+                    } else {
+                        "Nothing happened".to_string()
+                    })
+                }
             }
             Advance::FreeAgencyRound => {
-                let mut log = Vec::new();
-                let signed =
-                    free_agency_round(&mut self.world, &mut self.seats, &mut log, Some(self.club));
-                Ok(if signed {
-                    "Free agents signed".to_string()
+                if self.world.phase != Phase::FreeAgency {
+                    Err("free agency is not open".into())
                 } else {
-                    "Nobody signed".to_string()
-                })
+                    let mut log = Vec::new();
+                    let skip = self.skip();
+                    let signed =
+                        free_agency_round(&mut self.world, &mut self.seats, &mut log, skip);
+                    Ok(if signed {
+                        "Free agents signed".to_string()
+                    } else {
+                        "Nobody signed".to_string()
+                    })
+                }
             }
             Advance::StartNextSeason => self.start_next_season(&ctl),
         };
@@ -497,24 +609,80 @@ impl Host {
         }
     }
 
+    /// Whether the person holds an office with an offseason window (owner
+    /// or commissioner). If so, the offseason stops for the person to act.
+    fn office_open(&self) -> bool {
+        self.roles.owner || self.roles.commissioner
+    }
+
+    /// Owner budgets must sit inside the payroll limits. A rule change made
+    /// after the owners acted can leave one outside, so clamp them at close.
+    fn clamp_budgets(&mut self) -> Result<(), String> {
+        let (floor, cap) = (self.world.rules.payroll_floor, self.world.rules.payroll_cap);
+        let mut moved = 0;
+        for t in 0..TEAMS as u8 {
+            let budget = self.world.clubs[usize::from(t)].budget;
+            let fit = budget.clamp(floor, cap);
+            if fit != budget {
+                self.world
+                    .execute(
+                        &team_actor(Actor::owner, t),
+                        Command::SetBudget {
+                            team: t,
+                            payroll: fit,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            self.notices.push(format!(
+                "Payroll budgets for {moved} clubs were brought within the new limits."
+            ));
+        }
+        Ok(())
+    }
+
     fn finish_season(&mut self, ctl: &Control) -> Result<String, String> {
         ctl.start("Closing the season", 5);
         let mut log = Vec::new();
         let mut n = 0;
         loop {
             match self.world.phase {
-                Phase::Playoffs | Phase::Progressed | Phase::Offseason => {
+                Phase::Playoffs | Phase::Progressed => {
+                    commissioner_step(&mut self.world, &mut self.seats, &mut log)
+                        .map_err(|e| e.to_string())?;
+                }
+                Phase::Offseason => {
+                    // The person's offseason decisions are in; close the books.
+                    if self.office_open() {
+                        self.clamp_budgets()?;
+                    }
                     commissioner_step(&mut self.world, &mut self.seats, &mut log)
                         .map_err(|e| e.to_string())?;
                 }
                 Phase::Settling => {
                     commissioner_step(&mut self.world, &mut self.seats, &mut log)
                         .map_err(|e| e.to_string())?;
-                    // The commissioner sets the rules; owners set budgets,
-                    // prices and ballpark spending.
-                    connect::rules_step(&mut self.world, &mut self.seats, &mut log);
+                    // The AI commissioner sets the rules and the AI owners set
+                    // budgets, prices and ballpark spending, unless the person
+                    // holds that seat.
+                    if !self.roles.commissioner {
+                        connect::rules_step(&mut self.world, &mut self.seats, &mut log);
+                    }
                     for t in 0..TEAMS as u8 {
+                        if self.roles.owner && t == self.club {
+                            continue;
+                        }
                         connect::owner_step(&mut self.world, &mut self.seats, &mut log, t);
+                    }
+                    if self.office_open() && self.world.phase == Phase::Offseason {
+                        n += 1;
+                        ctl.step(n);
+                        self.notices
+                            .push("The season is over. Your offseason decisions are open.".into());
+                        return Ok("The offseason is open".into());
                     }
                 }
                 Phase::Drafting => break,
@@ -540,7 +708,7 @@ impl Host {
             let Some(&team) = d.order.get(d.next) else {
                 break;
             };
-            if team == self.club {
+            if self.skip() == Some(team) {
                 return Ok("You are on the clock".into());
             }
             if ctl.cancelled() {
@@ -561,7 +729,7 @@ impl Host {
             return Err("it is not the offseason window".into());
         }
         ctl.start("Starting the season", 4);
-        let skip = Some(self.club);
+        let skip = self.skip();
         let mut log = Vec::new();
         for _ in 0..3 {
             if !trade_round(&mut self.world, &mut self.seats, &mut log, skip) {
@@ -572,7 +740,8 @@ impl Host {
         while free_agency_round(&mut self.world, &mut self.seats, &mut log, skip) {}
         ctl.step(2);
         roster_stage(&mut self.world, &mut self.seats, &mut log, skip);
-        if !self.world.roster_problems(self.club).is_empty() {
+        // Without the general manager seat the AI has already set the roster.
+        if self.roles.gm && !self.world.roster_problems(self.club).is_empty() {
             self.auto_roster();
             let mut problems = self.world.roster_problems(self.club);
             if !problems.is_empty() {
@@ -613,7 +782,7 @@ impl Host {
             engine_version: ENGINE_VERSION.into(),
             league_name: LEAGUE_NAME.into(),
             team_name: self.world.clubs[usize::from(self.club)].name.clone(),
-            role: ROLE.into(),
+            role: role_title(&self.roles),
             in_game_date: self.date_text(),
             difficulty: self.difficulty.label(),
             saved_at_unix: std::time::SystemTime::now()
@@ -641,6 +810,10 @@ impl Host {
         );
         data.meta
             .insert("smart_tactics".into(), self.smart_tactics.to_string());
+        data.meta.insert(
+            "roles".into(),
+            serde_json::to_string(&self.roles).map_err(|e| e.to_string())?,
+        );
         data.meta.insert("data".into(), "params-1".into());
         Ok(data)
     }
@@ -717,13 +890,21 @@ impl Host {
             .and_then(|d| serde_json::from_str(d).ok())
             .ok_or("the save has no difficulty")?;
         let smart = meta.get("smart_tactics").is_some_and(|s| s == "true");
+        // Saves from before roles existed were general manager games.
+        let roles: Roles = match meta.get("roles") {
+            Some(r) => serde_json::from_str(r).map_err(|_| "the save has bad roles")?,
+            None => Roles::default(),
+        };
         if usize::from(club) >= TEAMS {
             return Err("the save names an unknown club".into());
+        }
+        if !roles.any() {
+            return Err("the save names no role for the person".into());
         }
         let seed = snap.seed;
         let model = Model::from_calibration(cal);
         let world = World::restore(cal.params, model, snap).map_err(|e| e.to_string())?;
-        let mut seats = ai_seats(seed, club, &difficulty, 0);
+        let mut seats = ai_seats(seed, club, &difficulty, 0, roles);
         seats.managers[usize::from(club)] = Box::new(BuiltInManager {
             tactics: if smart {
                 Tactics::Tables
@@ -740,6 +921,7 @@ impl Host {
             world,
             seats,
             club,
+            roles,
             difficulty,
             smart_tactics: smart,
             store: None,
