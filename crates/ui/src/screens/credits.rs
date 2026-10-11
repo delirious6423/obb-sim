@@ -17,4 +17,8 @@ pub fn show(_app: &mut App, ui: &mut egui::Ui) {
     );
     ui.add_space(10.0);
     ui.label("Built with Rust, egui/eframe, rayon, rusqlite.");
+    ui.label(
+        "The default fonts come with egui and are used under the SIL Open Font \
+         License 1.1 and the Ubuntu Font Licence 1.0. Full licence list: THIRD_PARTY.md.",
+    );
 }

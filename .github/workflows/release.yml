@@ -1,0 +1,30 @@
+name: Release build
+
+# Builds the game from a clean checkout on all three systems. Runs on every
+# version tag (v*) and by hand. Files are kept as workflow artifacts only.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build, self-test, collect
+        shell: bash
+        run: scripts/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baseball-sim-${{ matrix.os }}
+          path: dist/

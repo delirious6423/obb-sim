@@ -5,7 +5,39 @@ mod app;
 mod screens;
 mod widgets;
 
+/// `game --self-test`: found a small league, play 20 days and a box score
+/// request through the protocol, with no window. For build checks.
+fn self_test() -> Result<(), String> {
+    use host::GameClient;
+    use host::api::{Advance, Difficulty, NewGame, Preset, Request, Response};
+    let c = host::LocalClient::start(host::calibration(), None);
+    let new = Request::NewGame(NewGame {
+        seed: 1,
+        club: 0,
+        difficulty: Difficulty::Preset(Preset::Rookie),
+        burn_in_years: 0,
+    });
+    for req in [
+        new,
+        Request::Advance(Advance::SimDays(20)),
+        Request::Standings,
+    ] {
+        if let Response::Failed(e) = c.call(req) {
+            return Err(e);
+        }
+    }
+    println!("self-test ok");
+    Ok(())
+}
+
 fn main() -> eframe::Result {
+    if std::env::args().any(|a| a == "--self-test") {
+        if let Err(e) = self_test() {
+            eprintln!("self-test failed: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Baseball Sim")
