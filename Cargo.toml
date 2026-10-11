@@ -14,6 +14,7 @@ members = [
     "crates/connect",
     "crates/gm",
     "crates/host",
+    "crates/ui",
 ]
 
 [workspace.package]
@@ -43,6 +44,7 @@ tactics = { path = "crates/tactics" }
 connect = { path = "crates/connect" }
 gm = { path = "crates/gm" }
 host = { path = "crates/host" }
+ui = { path = "crates/ui" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -27,6 +27,7 @@ Source: https://www.retrosheet.org
 | rayon (and its dependencies: crossbeam-*, either, rayon-core) | parallel days in the season simulator | MIT OR Apache-2.0 |
 | rusqlite 0.40 (feature `bundled`, builds SQLite from C source with `cc`) and its dependencies (libsqlite3-sys, fallible-iterator, hashlink, ...) | save files (`storage`) | MIT (SQLite itself: public domain) |
 | sha2 0.11 (and digest, crypto-common, ...) | save checksums | MIT OR Apache-2.0 |
+| eframe, egui, egui_extras 0.36 (and their dependencies: winit, glow, glutin, epaint, ...) | desktop window and widgets (`ui`) | MIT OR Apache-2.0 (transitive licenses to be audited in Phase 6 with `cargo deny`) |
 | tempfile (dev only) | tests | MIT OR Apache-2.0 |
 
 Licenses above are the crates' published licenses; re-check with `cargo deny` before any release.
