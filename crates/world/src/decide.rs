@@ -265,7 +265,15 @@ impl World {
             }
             Command::StartSeason => {
                 self.need(Phase::FreeAgency)?;
-                Ok(vec![Event::SeasonStarted { year: self.year }])
+                let mut ev = vec![Event::SeasonStarted { year: self.year }];
+                ev.extend(
+                    self.clubs
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| c.cash < -CREDIT)
+                        .map(|(t, _)| Event::ClubRescued { team: t as u8 }),
+                );
+                Ok(ev)
             }
             Command::SetBudget { team, payroll } => {
                 self.check_team(*team)?;
@@ -276,6 +284,12 @@ impl World {
                     return Err(WorldError::Invalid(format!(
                         "budget must be between {} and {}",
                         self.rules.payroll_floor, self.rules.payroll_cap
+                    )));
+                }
+                let limit = self.budget_limit(usize::from(*team));
+                if *payroll > limit + 1e-9 {
+                    return Err(WorldError::Invalid(format!(
+                        "the club's lenders will not back a payroll budget above {limit:.1}"
                     )));
                 }
                 Ok(vec![Event::BudgetSet {
@@ -328,6 +342,9 @@ impl World {
                     return Err(WorldError::Phase(self.phase));
                 }
                 rules.check().map_err(WorldError::Invalid)?;
+                rules
+                    .check_change(&self.rules)
+                    .map_err(WorldError::Invalid)?;
                 Ok(vec![Event::RulesSet {
                     rules: rules.clone(),
                 }])
@@ -554,6 +571,7 @@ impl World {
             let profit = revenue - payroll - other;
             let cash = self.clubs[i].cash;
             let dividend = ((cash + profit) - 0.35 * revenue).max(0.0) * 0.6;
+            let rescued = cash + profit - dividend < -CREDIT;
             out.push((
                 Finance {
                     revenue,
@@ -563,9 +581,14 @@ impl World {
                     dividend,
                     attendance: crowd[i],
                     gate: gate[i],
+                    rescued,
                 },
                 ClubFinanceState {
-                    cash: cash + profit - dividend,
+                    cash: if rescued {
+                        0.1 * revenue
+                    } else {
+                        cash + profit - dividend
+                    },
                     revenue_prev: revenue,
                     hype: hype[i],
                     win_pct_prev: win_pct[i],

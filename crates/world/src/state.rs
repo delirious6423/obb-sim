@@ -149,14 +149,39 @@ pub struct Rules {
 }
 
 impl Rules {
+    /// Whether the change from `old` to `self` is gradual enough: the league
+    /// gives clubs notice, so limits move by at most a tenth a year (revenue
+    /// sharing by 0.04, draft rounds by 2).
+    ///
+    /// # Errors
+    /// The first limit that moves too far.
+    pub fn check_change(&self, old: &Rules) -> Result<(), String> {
+        let within = |new: f64, old: f64| (new - old).abs() <= 0.10 * old + 1e-9;
+        if !within(self.payroll_floor, old.payroll_floor)
+            || !within(self.payroll_cap, old.payroll_cap)
+            || !within(self.war_price, old.war_price)
+        {
+            return Err("payroll limits and price per win may move at most 10% a year".into());
+        }
+        if (self.revenue_sharing - old.revenue_sharing).abs() > 0.04 + 1e-9 {
+            return Err("revenue sharing may move at most 0.04 a year".into());
+        }
+        if self.draft_rounds.abs_diff(old.draft_rounds) > 2
+            || self.international_rounds.abs_diff(old.international_rounds) > 2
+        {
+            return Err("draft rounds may change by at most 2 a year".into());
+        }
+        Ok(())
+    }
+
     /// Whether the rules are inside the limits a commissioner may set.
     ///
     /// # Errors
     /// The first limit that is broken.
     pub fn check(&self) -> Result<(), String> {
         let ok = |x: f64, lo: f64, hi: f64| x.is_finite() && (lo..=hi).contains(&x);
-        if !ok(self.payroll_floor, 40.0, 140.0) {
-            return Err("payroll floor must be between 40 and 140".into());
+        if !ok(self.payroll_floor, 40.0, 100.0) {
+            return Err("payroll floor must be between 40 and 100".into());
         }
         if !ok(self.payroll_cap, self.payroll_floor + 40.0, 420.0) {
             return Err("payroll cap must be 40 to 420 and 40 above the floor".into());
@@ -185,6 +210,20 @@ impl Default for Rules {
             international_rounds: 5,
         }
     }
+}
+
+/// See [`World::budget_limit`].
+#[must_use]
+pub fn budget_limit_for(
+    market: f64,
+    st: &Stadium,
+    revenue_prev: f64,
+    cash: f64,
+    floor: f64,
+) -> f64 {
+    let other = 80.0 + 10.0 * market + 0.1 * st.capacity * st.quality;
+    let room = 0.5 * (cash + CREDIT).max(0.0);
+    (revenue_prev - other + room).max(floor)
 }
 
 /// Average ticket price the demand curve is anchored to, dollars.
@@ -348,6 +387,11 @@ pub struct Finance {
     /// Gate receipts.
     #[serde(default)]
     pub gate: f64,
+    /// The books ended below the credit line: the league arranged new
+    /// ownership (fresh capital, ticket price and stance reset, payroll
+    /// budget at the floor).
+    #[serde(default)]
+    pub rescued: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -413,6 +457,21 @@ impl PartialEq for World {
 }
 
 impl World {
+    /// The most payroll the league lets a club budget: what last year's
+    /// revenue left after other costs, plus half of the cash it has above
+    /// its credit line. Never below the payroll floor.
+    #[must_use]
+    pub fn budget_limit(&self, team: usize) -> f64 {
+        let c = &self.clubs[team];
+        budget_limit_for(
+            c.market,
+            &c.stadium,
+            c.revenue_prev,
+            c.cash,
+            self.rules.payroll_floor,
+        )
+    }
+
     /// What is wrong with a club's roster for starting a season (nothing, if
     /// the list is empty): the same rules `SeasonStarted` enforces.
     #[must_use]

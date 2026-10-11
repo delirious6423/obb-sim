@@ -189,6 +189,9 @@ impl World {
                 {
                     return invalid("budget outside the payroll limits");
                 }
+                if *payroll > self.budget_limit(usize::from(*team)) + 1e-9 {
+                    return invalid("budget above what the club's lenders allow");
+                }
             }
             Event::TicketSet { team, price } => {
                 if !club_ok(*team) {
@@ -214,8 +217,16 @@ impl World {
                     return Err(WorldError::UnknownClub(*team));
                 }
             }
+            Event::ClubRescued { team } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+                if self.clubs[usize::from(*team)].cash >= -CREDIT {
+                    return invalid("the club is not below its credit line");
+                }
+            }
             Event::RulesSet { rules } => {
-                if let Err(m) = rules.check() {
+                if let Err(m) = rules.check().and_then(|()| rules.check_change(&self.rules)) {
                     return Err(WorldError::Invalid(m));
                 }
             }
@@ -370,6 +381,11 @@ impl World {
                     c.win_pct_prev = win_pct_prev;
                     // Ballparks wear: quality drifts back toward ordinary.
                     c.stadium.quality = 1.0 + (c.stadium.quality - 1.0) * 0.9;
+                    if fin.rescued {
+                        c.stadium.ticket = crate::state::TICKET_REF;
+                        c.stance = crate::state::Stance::Balanced;
+                        c.budget = c.budget.min(self.rules.payroll_floor);
+                    }
                     self.finances[i].push(fin.clone());
                 }
                 self.phase = Phase::Offseason;
@@ -396,6 +412,15 @@ impl World {
                 c.cash -= amount;
                 c.stadium.quality = (c.stadium.quality + amount / 600.0).min(QUALITY_MAX);
                 c.stadium.capacity = (c.stadium.capacity + 0.05 * amount).min(CAPACITY_MAX);
+                Ok(())
+            }
+            Event::ClubRescued { team } => {
+                let floor = self.rules.payroll_floor;
+                let c = self.club_mut(*team)?;
+                c.cash = 0.1 * c.revenue_prev;
+                c.stadium.ticket = crate::state::TICKET_REF;
+                c.stance = crate::state::Stance::Balanced;
+                c.budget = c.budget.min(floor);
                 Ok(())
             }
             Event::StanceSet { team, stance } => {

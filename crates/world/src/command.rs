@@ -263,6 +263,11 @@ pub enum Event {
     RulesSet {
         rules: Rules,
     },
+    /// Before opening day a club below its credit line gets new owners:
+    /// fresh capital, ticket price and stance reset, payroll budget at the floor.
+    ClubRescued {
+        team: u8,
+    },
     PlayersProgressed {
         year: i32,
         updates: Vec<Update>,

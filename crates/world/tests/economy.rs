@@ -169,8 +169,8 @@ fn the_commissioner_sets_rules_within_limits_and_budgets_follow() {
     let mut w = offseason(9);
     let c = Actor::commissioner();
     let mut rules: Rules = w.rules.clone();
-    rules.payroll_cap = 180.0;
-    rules.payroll_floor = 80.0;
+    rules.payroll_cap = 220.0;
+    rules.payroll_floor = 75.0;
     // Owners may not.
     assert!(
         w.execute(
@@ -189,7 +189,13 @@ fn the_commissioner_sets_rules_within_limits_and_budgets_follow() {
     )
     .unwrap();
     assert_eq!(w.rules, rules);
-    assert!(w.clubs.iter().all(|c| (80.0..=180.0).contains(&c.budget)));
+    assert!(w.clubs.iter().all(|c| (75.0..=220.0).contains(&c.budget)));
+    // A move of more than a tenth is refused even inside the absolute limits.
+    let before = w.clone();
+    let mut jump = w.rules.clone();
+    jump.payroll_cap = 150.0;
+    assert!(w.execute(&c, Command::SetRules { rules: jump }).is_err());
+    assert!(w == before);
     // Out of limits is refused and changes nothing.
     let before = w.clone();
     let mut bad = rules;

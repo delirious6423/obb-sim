@@ -12,5 +12,8 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 sim-core.workspace = true
 world.workspace = true
 
+[dev-dependencies]
+calibration.workspace = true
+
 [lints]
 workspace = true

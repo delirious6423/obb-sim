@@ -459,7 +459,16 @@ pub fn owner_budget_for(o: &OwnerObs) -> f64 {
     let other = 80.0 + 10.0 * o.market + 0.1 * o.stadium.capacity * o.stadium.quality;
     let reserve = 0.2 * o.revenue_prev;
     let cash_push = 0.25 * (o.cash - reserve).clamp(-80.0, 40.0);
-    (0.95 * o.revenue_prev - other + cash_push).clamp(o.payroll_floor, o.payroll_cap)
+    let limit = crate::state::budget_limit_for(
+        o.market,
+        &o.stadium,
+        o.revenue_prev,
+        o.cash,
+        o.payroll_floor,
+    );
+    (0.95 * o.revenue_prev - other + cash_push)
+        .min(limit)
+        .clamp(o.payroll_floor, o.payroll_cap)
 }
 
 #[must_use]
