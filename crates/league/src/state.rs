@@ -287,12 +287,18 @@ impl League {
                 }
                 let g = self
                     .games
-                    .get_mut(game)
+                    .get(game)
                     .ok_or(LeagueError::UnknownGame(*game))?;
                 if g.result.is_some() {
                     return Err(LeagueError::AlreadyPlayed(*game));
                 }
-                g.result = Some((*home_runs, *away_runs));
+                let (home, away) = (g.home, g.away);
+                // A game cannot have been played by a team with no players.
+                self.strength(home)?;
+                self.strength(away)?;
+                if let Some(g) = self.games.get_mut(game) {
+                    g.result = Some((*home_runs, *away_runs));
+                }
             }
         }
         Ok(())
@@ -300,7 +306,8 @@ impl League {
 
     /// Check that loaded data is a state events could have produced: ids are
     /// 0..n in order and match their keys, counters equal the counts, every
-    /// reference resolves, ratings are in range, and no game is tied.
+    /// reference resolves, ratings are in range, no game is tied, and every
+    /// played game had players on both sides.
     fn validate(&self) -> Result<(), LeagueError> {
         let corrupt = LeagueError::Corrupt;
         let is_sequence = |i: usize, key: u32| u32::try_from(i).ok() == Some(key);
@@ -334,6 +341,11 @@ impl League {
             }
             if game.result.is_some_and(|(h, a)| h == a) {
                 return Err(corrupt("game result is a tie"));
+            }
+            if game.result.is_some()
+                && (self.strength(game.home).is_err() || self.strength(game.away).is_err())
+            {
+                return Err(corrupt("played game has a team with no players"));
             }
         }
         if !counts(self.teams.len(), self.next_team)

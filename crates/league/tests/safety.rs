@@ -171,9 +171,17 @@ fn from_events_rejects_events_that_do_not_fit() {
         Err(LeagueError::UnknownTeam(TeamId(0)))
     );
     // Tied result.
+    let signed = |team: u32, player: u32| Event::PlayerSigned {
+        team: TeamId(team),
+        player: PlayerId(player),
+        name: format!("Player {player}"),
+        rating: 50,
+    };
     let events = [
         team_created(0),
         team_created(1),
+        signed(0, 0),
+        signed(1, 1),
         Event::GameScheduled {
             game: GameId(0),
             home: TeamId(0),
@@ -190,7 +198,7 @@ fn from_events_rejects_events_that_do_not_fit() {
         Err(LeagueError::TiedResult { .. })
     ));
     // Same game played twice.
-    let mut twice = events[..3].to_vec();
+    let mut twice = events[..5].to_vec();
     let played = Event::GamePlayed {
         game: GameId(0),
         home_runs: 4,
@@ -241,4 +249,47 @@ fn deserializing_bad_data_is_rejected() {
         assert!(err.contains("corrupt league data"), "{path}: {err}");
         assert!(err.contains(expect), "{path}: {err}");
     }
+}
+
+// --- Review gap: played games need players on both sides ---
+
+#[test]
+fn game_played_by_an_empty_roster_is_refused() {
+    let mut events = vec![
+        team_created(0),
+        team_created(1),
+        Event::GameScheduled {
+            game: GameId(0),
+            home: TeamId(0),
+            away: TeamId(1),
+        },
+    ];
+    events.push(Event::GamePlayed {
+        game: GameId(0),
+        home_runs: 3,
+        away_runs: 1,
+    });
+    assert_eq!(
+        League::from_events(SEED, &events),
+        Err(LeagueError::EmptyRoster(TeamId(0)))
+    );
+}
+
+#[test]
+fn loaded_league_with_a_played_game_and_no_players_is_refused() {
+    let events = [
+        team_created(0),
+        team_created(1),
+        Event::GameScheduled {
+            game: GameId(0),
+            home: TeamId(0),
+            away: TeamId(1),
+        },
+    ];
+    let league = League::from_events(SEED, &events).unwrap();
+    let mut v = serde_json::to_value(&league).unwrap();
+    assert_eq!(v.pointer("/games/0/result"), Some(&serde_json::Value::Null));
+    v["games"]["0"]["result"] = serde_json::json!([3, 1]);
+    let err = serde_json::from_value::<League>(v).unwrap_err().to_string();
+    assert!(err.contains("no players"), "{err}");
 }
