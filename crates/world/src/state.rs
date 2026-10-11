@@ -418,6 +418,9 @@ pub struct World {
     /// player's talent so the average major leaguer stays at the league
     /// average (see `World::progress`). Moved only by progression events.
     pub era: [Z; 2],
+    /// The year the commissioner last changed the rules; rules change at most
+    /// once a year, so the rate limit cannot be dodged by repeating a change.
+    pub rules_set: Option<i32>,
     /// The regular season so far, while it is being played.
     pub season: Option<InSeason>,
     pub model: Model,
@@ -452,6 +455,7 @@ impl PartialEq for World {
             && self.offers == other.offers
             && self.next_offer == other.next_offer
             && self.era == other.era
+            && self.rules_set == other.rules_set
             && self.season == other.season
     }
 }
@@ -551,6 +555,8 @@ pub struct Snapshot {
     pub next_offer: u32,
     pub era: [Z; 2],
     pub season: Option<InSeason>,
+    #[serde(default)]
+    pub rules_set: Option<i32>,
 }
 
 impl World {
@@ -576,6 +582,7 @@ impl World {
             next_offer: self.next_offer,
             era: self.era,
             season: self.season.clone(),
+            rules_set: self.rules_set,
         }
     }
 
@@ -701,6 +708,7 @@ impl World {
         w.next_offer = s.next_offer;
         w.era = s.era;
         w.season = s.season;
+        w.rules_set = s.rules_set;
         Ok(w)
     }
 }

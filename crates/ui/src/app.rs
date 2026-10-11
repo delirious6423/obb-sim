@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use host::api::{
-    Action, Advance, Club, DraftView, FinancesView, Overview, PlayerRow, PlayerView, Progress,
-    Request, Response, RosterView, SaveInfo, ScheduleView, Standings, TradeView,
+    Action, Advance, Club, DraftView, FinancesView, LeagueView, Overview, OwnerView, PlayerRow,
+    PlayerView, Progress, Request, Response, RosterView, SaveInfo, ScheduleView, Standings,
+    TradeView,
 };
 use host::{GameClient, LocalClient, Ticket};
 
@@ -26,6 +27,8 @@ pub enum Screen {
     Trades,
     Draft,
     Finances,
+    Owner,
+    Commissioner,
     Saves,
     Settings,
     Credits,
@@ -44,6 +47,8 @@ pub enum Tag {
     Draft,
     Finances,
     Trades,
+    Owner,
+    League,
     Saves,
     /// A change to the league (an action, an advance, a save, a load).
     Change,
@@ -64,6 +69,12 @@ pub struct Data {
     pub draft: Option<DraftView>,
     pub finances: Option<FinancesView>,
     pub trades: Option<TradeView>,
+    pub owner: Option<OwnerView>,
+    pub league: Option<LeagueView>,
+    /// The last failed read of the owner's desk or the league office (the
+    /// screen shows it instead of a spinner).
+    pub owner_error: Option<String>,
+    pub league_error: Option<String>,
     pub saves: Option<Vec<SaveInfo>>,
 }
 
@@ -184,6 +195,12 @@ impl App {
             }
             Screen::Draft => self.ask(Request::DraftBoard, Tag::Draft),
             Screen::Finances => self.ask(Request::Finances, Tag::Finances),
+            Screen::Owner => {
+                self.ask(Request::OwnerDesk, Tag::Owner);
+                // The payroll limits the budget slider is bounded by.
+                self.ask(Request::Finances, Tag::Finances);
+            }
+            Screen::Commissioner => self.ask(Request::LeagueOffice, Tag::League),
             Screen::Saves => self.ask(Request::ListSaves, Tag::Saves),
         }
     }
@@ -229,6 +246,8 @@ impl App {
                     match tag {
                         Tag::Saves => self.data.saves = Some(Vec::new()),
                         Tag::BoxScore(g) => self.data.box_score = Some((g, None)),
+                        Tag::Owner => self.data.owner_error = Some(e.clone()),
+                        Tag::League => self.data.league_error = Some(e.clone()),
                         _ => {}
                     }
                     self.say(e, true);
@@ -241,6 +260,9 @@ impl App {
                     self.state.level_filter = None;
                     self.state.trade_give.clear();
                     self.state.trade_get.clear();
+                    self.state.rules = None;
+                    self.state.owner_budget = None;
+                    self.state.owner_ticket = None;
                     self.say(m, false);
                     self.viewing = 0;
                     self.screen = Screen::Home;
@@ -251,6 +273,10 @@ impl App {
                     self.state.trade_give.clear();
                     self.state.trade_get.clear();
                     self.data.box_score = None;
+                    // The views are read again, so edits in progress are stale.
+                    self.state.rules = None;
+                    self.state.owner_budget = None;
+                    self.state.owner_ticket = None;
                     if !m.is_empty() {
                         self.say(m, false);
                     }
@@ -275,6 +301,14 @@ impl App {
                 (_, Response::Draft(d)) => self.data.draft = Some(d),
                 (_, Response::Finances(f)) => self.data.finances = Some(f),
                 (_, Response::Trades(t)) => self.data.trades = Some(t),
+                (_, Response::Owner(o)) => {
+                    self.data.owner = Some(o);
+                    self.data.owner_error = None;
+                }
+                (_, Response::League(l)) => {
+                    self.data.league = Some(l);
+                    self.data.league_error = None;
+                }
                 (_, Response::Saves(s)) => self.data.saves = Some(s),
                 _ => {}
             }

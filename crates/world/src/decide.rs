@@ -71,6 +71,7 @@ impl World {
             offers: Vec::new(),
             next_offer: 0,
             era: [[0.0; crate::rating::K]; 2],
+            rules_set: None,
             season: None,
             model,
             env: sim_core::Env::new(params).expect("valid parameters"),
@@ -340,6 +341,11 @@ impl World {
             Command::SetRules { rules } => {
                 if !matches!(self.phase, Phase::Offseason | Phase::Progressed) {
                     return Err(WorldError::Phase(self.phase));
+                }
+                if self.rules_set == Some(self.year) {
+                    return Err(WorldError::Invalid(
+                        "the rules were already changed this year".into(),
+                    ));
                 }
                 rules.check().map_err(WorldError::Invalid)?;
                 rules

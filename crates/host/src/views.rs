@@ -546,7 +546,7 @@ pub(crate) fn league_office(w: &World, stage: Stage, can_act: bool) -> LeagueVie
         stage,
         rules: rules_view(&w.rules),
         limits: RuleLimits {
-            payroll_floor: (40.0, 140.0),
+            payroll_floor: (40.0, 100.0),
             payroll_cap: (w.rules.payroll_floor + 40.0, 420.0),
             revenue_sharing: (0.0, 0.4),
             war_price: (2.0, 9.0),

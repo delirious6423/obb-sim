@@ -9,7 +9,7 @@ mod widgets;
 /// request through the protocol, with no window. For build checks.
 fn self_test() -> Result<(), String> {
     use host::GameClient;
-    use host::api::{Advance, Difficulty, NewGame, Preset, Request, Response};
+    use host::api::{Advance, Difficulty, NewGame, Preset, Request, Response, Roles};
     let c = host::LocalClient::start(host::calibration(), None);
     let new = Request::NewGame(NewGame {
         seed: 1,
@@ -24,6 +24,38 @@ fn self_test() -> Result<(), String> {
         Request::Standings,
     ] {
         if let Response::Failed(e) = c.call(req) {
+            return Err(e);
+        }
+    }
+    // The owner's desk and the league office, through a second client. Each
+    // seat starts its own league, then reads the desk it holds.
+    let seats = host::LocalClient::start(host::calibration(), None);
+    let new_seat = |roles: Roles| {
+        Request::NewGame(NewGame {
+            seed: 1,
+            club: 0,
+            difficulty: Difficulty::Preset(Preset::Rookie),
+            burn_in_years: 0,
+            roles,
+        })
+    };
+    let owner = Roles {
+        gm: true,
+        owner: true,
+        commissioner: false,
+    };
+    let commissioner = Roles {
+        gm: true,
+        owner: false,
+        commissioner: true,
+    };
+    for req in [
+        new_seat(owner),
+        Request::OwnerDesk,
+        new_seat(commissioner),
+        Request::LeagueOffice,
+    ] {
+        if let Response::Failed(e) = seats.call(req) {
             return Err(e);
         }
     }

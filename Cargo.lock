@@ -697,6 +697,7 @@ dependencies = [
 name = "connect"
 version = "0.0.0"
 dependencies = [
+ "calibration",
  "protocol",
  "serde",
  "serde_json",

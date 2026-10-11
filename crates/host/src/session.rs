@@ -436,9 +436,9 @@ impl Host {
             }
             other => other,
         };
-        // Every other action is a general manager's, except tactics, which
-        // belong to the field manager.
-        if !self.roles.gm && !matches!(a, Action::SetTactics { .. }) {
+        // Every other action is the general manager's (tactics included: the
+        // person's field manager is part of that seat).
+        if !self.roles.gm {
             return Response::Failed("you do not hold the general manager role".into());
         }
         let cmd = match a {

@@ -226,6 +226,9 @@ impl World {
                 }
             }
             Event::RulesSet { rules } => {
+                if self.rules_set == Some(self.year) {
+                    return invalid("the rules were already changed this year");
+                }
                 if let Err(m) = rules.check().and_then(|()| rules.check_change(&self.rules)) {
                     return Err(WorldError::Invalid(m));
                 }
@@ -436,6 +439,7 @@ impl World {
                     c.budget = c.budget.clamp(rules.payroll_floor, rules.payroll_cap);
                 }
                 self.rules = rules.clone();
+                self.rules_set = Some(self.year);
                 Ok(())
             }
             Event::TradeProposed {

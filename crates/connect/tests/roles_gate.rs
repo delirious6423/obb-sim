@@ -179,8 +179,15 @@ impl CommissionerAgent for Adversary {
             (r.revenue_sharing + if self.up[2] { 0.04 } else { -0.04 }).clamp(0.0, 0.4);
         r.war_price = step(r.war_price, self.up[3]).clamp(2.0, 9.0);
         // Keep each step inside the allowed change from the rules in force.
-        let ok = r.check().is_ok() && r.check_change(&l.rules).is_ok();
-        ok.then_some(r)
+        if r.check().is_ok() && r.check_change(&l.rules).is_ok() {
+            return Some(r);
+        }
+        // The floor and cap clamps can disagree; then move the other two.
+        let mut r = l.rules.clone();
+        r.revenue_sharing =
+            (r.revenue_sharing + if self.up[2] { 0.04 } else { -0.04 }).clamp(0.0, 0.4);
+        r.war_price = step(r.war_price, self.up[3]).clamp(2.0, 9.0);
+        (r.check().is_ok() && r.check_change(&l.rules).is_ok()).then_some(r)
     }
 }
 
@@ -273,6 +280,9 @@ struct Outcome {
     /// Club-seasons (settlement or year end) below -CREDIT, any club.
     below_credit: u32,
     roster_problems: u32,
+    /// Largest distance of the rules in force from the defaults (relative
+    /// floor + cap + sharing), to prove an adversarial commissioner moved them.
+    rule_move: f64,
     violations: usize,
     /// League mean payroll, $M, first and last ten seasons.
     payroll_first: f64,
@@ -302,6 +312,7 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
         insolvent_ai: 0,
         insolvent_reckless: 0,
         below_credit: 0,
+        rule_move: 0.0,
         roster_problems: 0,
         violations: 0,
         payroll_first: 0.0,
@@ -326,14 +337,17 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
                 continue;
             };
             o.settlements += 1;
-            for (t, (_, st)) in clubs.iter().enumerate() {
+            for (t, (fin, st)) in clubs.iter().enumerate() {
                 let res = reckless(mix, t as u8);
+                // A rescued club's recorded cash is the new owners' capital;
+                // before the rescue it was below the credit line.
+                let cash = if fin.rescued { -CREDIT } else { st.cash };
                 if res {
-                    o.min_cash_reckless = o.min_cash_reckless.min(st.cash);
+                    o.min_cash_reckless = o.min_cash_reckless.min(cash);
                 } else {
-                    o.min_cash_ai = o.min_cash_ai.min(st.cash);
+                    o.min_cash_ai = o.min_cash_ai.min(cash);
                 }
-                if st.cash < 0.0 {
+                if cash < 0.0 {
                     if res {
                         o.insolvent_reckless += 1;
                     } else {
@@ -345,6 +359,23 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
                 }
             }
         }
+        // Pre-season rescues (cash below the credit line after the offseason).
+        for ev in &log {
+            if let Event::ClubRescued { team } = ev {
+                if reckless(mix, *team) {
+                    o.insolvent_reckless += 1;
+                    o.min_cash_reckless = o.min_cash_reckless.min(-CREDIT);
+                } else {
+                    o.insolvent_ai += 1;
+                    o.min_cash_ai = o.min_cash_ai.min(-CREDIT);
+                }
+            }
+        }
+        let d = Rules::default();
+        let mv = (w.rules.payroll_cap / d.payroll_cap - 1.0).abs()
+            + (w.rules.payroll_floor / d.payroll_floor - 1.0).abs()
+            + (w.rules.revenue_sharing - d.revenue_sharing).abs() / d.revenue_sharing;
+        o.rule_move = o.rule_move.max(mv);
         let cap = w.rules.payroll_cap;
         let mut total = 0.0;
         for t in 0..TEAMS {
@@ -412,6 +443,12 @@ fn verdict(mix: Mix, o: &Outcome, seasons: usize) -> Vec<String> {
     }
     if o.below_credit > 0 {
         f.push(format!("{} club-seasons below -CREDIT", o.below_credit));
+    }
+    if matches!(mix, Mix::Adversary | Mix::OneReckless) && o.rule_move < 0.3 {
+        f.push(format!(
+            "the adversarial commissioner barely moved the rules (max {:.2})",
+            o.rule_move
+        ));
     }
     if matches!(mix, Mix::AllReckless | Mix::OneReckless) && o.roster_problems > 0 {
         f.push(format!("{} roster problems", o.roster_problems));

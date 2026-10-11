@@ -247,3 +247,27 @@ fn economy_events_survive_json_and_replay() {
     let back: Vec<Event> = serde_json::from_str(&json).unwrap();
     assert_eq!(log, back);
 }
+
+#[test]
+fn rules_change_at_most_once_a_year() {
+    let mut w = offseason(12);
+    let c = Actor::commissioner();
+    let mut rules = w.rules.clone();
+    rules.payroll_cap = 250.0;
+    w.execute(
+        &c,
+        Command::SetRules {
+            rules: rules.clone(),
+        },
+    )
+    .unwrap();
+    // A second change in the same year is refused, however small, so the
+    // yearly limit cannot be dodged by repeating it.
+    rules.payroll_cap = 260.0;
+    let before = w.clone();
+    assert!(w.execute(&c, Command::SetRules { rules }).is_err());
+    assert!(w == before);
+    // The year of the change survives a snapshot.
+    let snap = w.snapshot();
+    assert_eq!(snap.rules_set, Some(w.year));
+}

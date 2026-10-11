@@ -105,6 +105,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
     }
 
+    ui.add_space(10.0);
+    ui.heading("Your seats");
+    ui.label(
+        "Hold the general manager seat to run a club's roster. Hold the owner seat to run \
+         its books and ballpark, and the commissioner seat to set league rules. A seat you \
+         do not hold is played by an AI agent. At least one seat must be held.",
+    );
+    ui.checkbox(&mut app.state.roles.gm, "General manager");
+    ui.checkbox(&mut app.state.roles.owner, "Owner");
+    ui.checkbox(&mut app.state.roles.commissioner, "Commissioner");
+
     ui.add_space(12.0);
     let seed = app.state.seed_text.trim().parse::<u64>().ok();
     if seed.is_none() {
@@ -113,9 +124,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             "The seed must be a whole number.",
         );
     }
+    let seats = app.state.roles.any();
+    if !seats {
+        ui.colored_label(
+            egui::Color32::from_rgb(220, 90, 90),
+            "Hold at least one seat.",
+        );
+    }
     ui.horizontal(|ui| {
         let go = ui.add_enabled(
-            !busy && seed.is_some(),
+            !busy && seed.is_some() && seats,
             egui::Button::new("Start the league"),
         );
         if go.clicked() {
@@ -130,7 +148,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     club: app.state.pick_club,
                     difficulty,
                     burn_in_years: app.state.burn_in,
-                    roles: Default::default(),
+                    roles: app.state.roles,
                 }),
                 Tag::Start,
             );

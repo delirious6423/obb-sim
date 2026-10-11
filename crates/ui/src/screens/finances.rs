@@ -117,15 +117,26 @@ fn history(ui: &mut egui::Ui, f: &FinancesView) {
         .show(ui, |ui| {
             egui::Grid::new("finances_history_grid")
                 .striped(true)
-                .num_columns(6)
+                .num_columns(8)
                 .spacing([14.0, 4.0])
                 .show(ui, |ui| {
-                    for h in ["Year", "Revenue", "Payroll", "Other", "Spent", "Dividend"] {
+                    for h in [
+                        "Year",
+                        "Attendance",
+                        "Gate",
+                        "Revenue",
+                        "Payroll",
+                        "Other",
+                        "Spent",
+                        "Dividend",
+                    ] {
                         ui.strong(h);
                     }
                     ui.end_row();
                     for r in &f.history {
                         ui.label(r.year.to_string());
+                        ui.label(format!("{:.1}k", r.attendance));
+                        ui.label(money(r.gate));
                         ui.label(money(r.revenue));
                         ui.label(money(r.payroll));
                         ui.label(money(r.other));

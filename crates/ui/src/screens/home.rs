@@ -37,6 +37,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             money(o.budget)
         ));
     });
+    if o.stage == Stage::Offseason && (o.roles.owner || o.roles.commissioner) {
+        ui.label("Set your owner/league decisions, then close the books.");
+    }
     if o.on_the_clock {
         ui.colored_label(
             egui::Color32::from_rgb(230, 180, 60),

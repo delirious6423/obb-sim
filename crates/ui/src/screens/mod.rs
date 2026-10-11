@@ -2,11 +2,12 @@
 //! that draws from `app.data` and asks for changes through `app.act`,
 //! `app.advance` or `app.ask`. Screens never touch the simulation.
 
-use host::api::{Advance, Level, Levers, Preset, Stage};
+use host::api::{Advance, Level, Levers, Preset, Roles, RulesView, Stage};
 
 use crate::app::{App, Screen};
 use crate::widgets::{Col, Sort};
 
+mod commissioner;
 mod credits;
 mod draft;
 mod finances;
@@ -14,6 +15,7 @@ mod free_agents;
 mod home;
 mod lineup;
 mod new_game;
+mod owner;
 mod player;
 mod roster;
 mod saves;
@@ -44,6 +46,17 @@ pub struct State {
     pub level_filter: Option<Level>,
     pub smart_tactics: bool,
     pub contract_sort: Sort,
+    /// The seats the person takes when starting a league.
+    pub roles: Roles,
+    /// The owner's payroll budget while the slider is dragged.
+    pub owner_budget: Option<f64>,
+    /// The owner's ticket price while the slider is dragged.
+    pub owner_ticket: Option<f64>,
+    /// The ballpark project amount, millions.
+    pub build_amount: f64,
+    /// The commissioner's rules as edited (None: taken from the league view).
+    pub rules: Option<RulesView>,
+    pub books_sort: commissioner::BooksSort,
 }
 
 impl Default for State {
@@ -69,33 +82,53 @@ impl Default for State {
             level_filter: None,
             smart_tactics: false,
             contract_sort: Sort::by(Col::Salary, true),
+            roles: Roles::default(),
+            owner_budget: None,
+            owner_ticket: None,
+            build_amount: 10.0,
+            rules: None,
+            books_sort: commissioner::BooksSort::default(),
         }
     }
 }
 
-const TABS: &[(Screen, &str)] = &[
-    (Screen::Home, "Home"),
-    (Screen::Standings, "Standings"),
-    (Screen::Schedule, "Schedule"),
-    (Screen::Roster, "Roster"),
-    (Screen::Lineup, "Depth chart"),
-    (Screen::FreeAgents, "Free agents"),
-    (Screen::Trades, "Trades"),
-    (Screen::Draft, "Draft"),
-    (Screen::Finances, "Finances"),
-    (Screen::Saves, "Saves"),
-    (Screen::Settings, "Settings"),
-    (Screen::Credits, "Credits"),
-];
+/// The tabs for the person's seats. The owner and commissioner tabs appear
+/// only when the seat is held.
+fn tabs(app: &App) -> Vec<(Screen, &'static str)> {
+    let roles = app.data.overview.as_ref().map(|o| o.roles);
+    let mut tabs = vec![
+        (Screen::Home, "Home"),
+        (Screen::Standings, "Standings"),
+        (Screen::Schedule, "Schedule"),
+        (Screen::Roster, "Roster"),
+        (Screen::Lineup, "Depth chart"),
+        (Screen::FreeAgents, "Free agents"),
+        (Screen::Trades, "Trades"),
+        (Screen::Draft, "Draft"),
+        (Screen::Finances, "Finances"),
+    ];
+    if roles.is_some_and(|r| r.owner) {
+        tabs.push((Screen::Owner, "Owner"));
+    }
+    if roles.is_some_and(|r| r.commissioner) {
+        tabs.push((Screen::Commissioner, "Commissioner"));
+    }
+    tabs.extend([
+        (Screen::Saves, "Saves"),
+        (Screen::Settings, "Settings"),
+        (Screen::Credits, "Credits"),
+    ]);
+    tabs
+}
 
 /// The whole window: top bar, sim bar, status line and the screen.
 pub fn shell(app: &mut App, ui: &mut egui::Ui) {
     egui::Panel::top("tabs").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             if app.started {
-                for (s, name) in TABS {
-                    if ui.selectable_label(app.screen == *s, *name).clicked() {
-                        app.go(*s);
+                for (s, name) in tabs(app) {
+                    if ui.selectable_label(app.screen == s, name).clicked() {
+                        app.go(s);
                     }
                 }
             } else {
@@ -131,6 +164,8 @@ pub fn shell(app: &mut App, ui: &mut egui::Ui) {
         Screen::Trades => trades::show(app, ui),
         Screen::Draft => draft::show(app, ui),
         Screen::Finances => finances::show(app, ui),
+        Screen::Owner => owner::show(app, ui),
+        Screen::Commissioner => commissioner::show(app, ui),
         Screen::Saves => saves::show(app, ui),
         Screen::Settings => settings::show(app, ui),
         Screen::Credits => credits::show(app, ui),
