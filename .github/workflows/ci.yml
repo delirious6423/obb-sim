@@ -28,5 +28,5 @@ jobs:
       - run: cargo test --workspace
       - name: Speed benchmark (informational)
         run: cargo run --release -p cli -- bench 20
-      - name: Speed gate (protocol: found, 30 single days, season, offseason)
+      - name: Speed gate (found, 30 single days, season, offseason)
         run: cargo run --release -p host --example bench -- --check
