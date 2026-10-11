@@ -3,7 +3,7 @@
 //! the same built-in policies.
 
 use protocol::{Actor, TeamId};
-use world::agents::{GmView, OwnerObs};
+use world::agents::{GmView, LeagueObs, OwnerObs};
 use world::command::{Command, Event, WorldError};
 use world::rating::Kind;
 use world::state::{MAJORS_PER_KIND, Phase, TEAMS, Tactics, World};
@@ -91,6 +91,26 @@ pub fn commissioner_step(
     }
 }
 
+/// Ask the commissioner for rules for the coming season.
+pub fn rules_step(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
+    if let Some(rules) = seats.commissioner.rules(&LeagueObs::new(w))
+        && let Err(e) = exec(w, log, Actor::commissioner(), Command::SetRules { rules })
+    {
+        refuse(seats, w, 0, "commissioner", &e);
+    }
+}
+
+/// Let one club's owner set budget, ticket price, ballpark spending and the
+/// general manager's stance. A refused command is on record; the rest go on.
+pub fn owner_step(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>, t: u8) {
+    let action = seats.owners[usize::from(t)].act(&OwnerObs::new(w, t));
+    for cmd in action.commands(t) {
+        if let Err(e) = exec(w, log, team_actor(Actor::owner, t), cmd) {
+            refuse(seats, w, t, "owner", &e);
+        }
+    }
+}
+
 pub fn team_actor(role: fn(TeamId) -> Actor, team: u8) -> Actor {
     role(TeamId(u32::from(team)))
 }
@@ -148,15 +168,9 @@ pub fn run_year_with(
     for _ in 0..3 {
         commissioner_step(w, seats, log)?; // season, playoffs, finances
     }
+    rules_step(w, seats, log);
     for t in 0..TEAMS as u8 {
-        let action = seats.owners[usize::from(t)].act(&OwnerObs::new(w, t));
-        let cmd = Command::SetBudget {
-            team: t,
-            payroll: action.payroll,
-        };
-        if let Err(e) = exec(w, log, team_actor(Actor::owner, t), cmd) {
-            refuse(seats, w, t, "owner", &e);
-        }
+        owner_step(w, seats, log, t);
     }
     commissioner_step(w, seats, log)?; // progress players
     commissioner_step(w, seats, log)?; // open the draft

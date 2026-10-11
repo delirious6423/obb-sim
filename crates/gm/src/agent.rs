@@ -2,7 +2,7 @@ use connect::{GmAction, GmAgent, GmStage, GmTurn};
 use world::agents::{GmObs, Held, Seen, set_levels};
 use world::player::{Level, Origin};
 use world::rating::Kind;
-use world::state::{CREDIT, MAJORS_PER_KIND, MIN_SALARY, ROSTER_MAX_PER_KIND};
+use world::state::{CREDIT, MAJORS_PER_KIND, MIN_SALARY, ROSTER_MAX_PER_KIND, Stance};
 
 use crate::profile::{Profile, TradeMode};
 use crate::value::{Context, Est};
@@ -47,7 +47,13 @@ impl SurplusGm {
             return Vec::new();
         };
         let ctx = Context::new(obs, self.seed);
-        let youth = self.profile.personality.youth;
+        // The owner's stance moves the taste for youth: win now or build.
+        let shift = match obs.stance {
+            Stance::Contend => -0.2,
+            Stance::Balanced => 0.0,
+            Stance::Rebuild => 0.2,
+        };
+        let youth = (self.profile.personality.youth + shift).clamp(0.0, 1.0);
         let mut best: Option<(f64, Seen)> = None;
         for s in &d.prospects {
             if (s.origin == Origin::International) != d.international

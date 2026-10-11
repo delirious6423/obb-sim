@@ -1,5 +1,5 @@
-use world::agents::OwnerObs;
-use world::state::Tactics;
+use world::agents::{LeagueObs, OwnerObs};
+use world::state::{Rules, Tactics};
 
 use crate::model::{
     CommissionerAction, CommissionerObs, FieldManagerObs, GameObs, GmAction, GmTurn, OwnerAction,
@@ -8,6 +8,12 @@ use crate::model::{
 
 pub trait CommissionerAgent {
     fn act(&mut self, obs: &CommissionerObs) -> CommissionerAction;
+
+    /// New league rules for the coming season, asked once each offseason
+    /// before players progress. `None` leaves the rules as they are.
+    fn rules(&mut self, _obs: &LeagueObs) -> Option<Rules> {
+        None
+    }
 }
 
 pub trait OwnerAgent {

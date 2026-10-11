@@ -16,8 +16,9 @@ mod remote;
 pub use agent::{CommissionerAgent, FieldManagerAgent, GmAgent, LiveAgent, OwnerAgent};
 pub use builtin::{BuiltInCommissioner, BuiltInGm, BuiltInLive, BuiltInManager, BuiltInOwner};
 pub use driver::{
-    Seats, Violation, commissioner_step, draft_turn, exec, free_agency_round, refuse, roster_stage,
-    run_year_with, set_tactics, start_season, start_with, team_actor, trade_round,
+    Seats, Violation, commissioner_step, draft_turn, exec, free_agency_round, owner_step, refuse,
+    roster_stage, rules_step, run_year_with, set_tactics, start_season, start_with, team_actor,
+    trade_round,
 };
 pub use live::{LiveManager, play_exhibition};
 pub use model::{

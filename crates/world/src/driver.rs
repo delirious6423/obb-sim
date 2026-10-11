@@ -4,7 +4,10 @@
 use protocol::{Actor, TeamId};
 use rand_core::RngCore;
 
-use crate::agents::{GmView, draft_pick, free_agency_step, owner_budget, set_levels};
+use crate::agents::{
+    GmView, LeagueObs, commissioner_rules_for, draft_pick, free_agency_step, owner_budget,
+    owner_moves, set_levels,
+};
 use crate::command::{Command, Event, WorldError};
 use crate::player::{Contract, Level, Origin, PlayerId, prospect, talent_at};
 use crate::rating::{Kind, normal, uniform};
@@ -29,8 +32,13 @@ fn exec(w: &mut World, log: &mut Vec<Event>, actor: Actor, cmd: Command) -> Resu
 /// next: budgets, ageing, draft, free agency, roster setting.
 pub fn offseason(w: &mut World, log: &mut Vec<Event>) -> Result<(), WorldError> {
     let c = Actor::commissioner();
+    if let Some(rules) = commissioner_rules_for(&LeagueObs::new(w)) {
+        exec(w, log, c, Command::SetRules { rules })?;
+    }
     for t in 0..TEAMS as u8 {
-        exec(w, log, owner(t), owner_budget(w, t))?;
+        for cmd in owner_moves(w, t) {
+            exec(w, log, owner(t), cmd)?;
+        }
     }
     exec(w, log, c, Command::ProgressPlayers)?;
     exec(w, log, c, Command::OpenDraft)?;

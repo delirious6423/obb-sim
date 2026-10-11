@@ -172,7 +172,10 @@ impl Transport for Hostile {
                 }
             }
             Request::Owner(_) => Response::Owner {
-                action: connect::OwnerAction { payroll: -5.0 },
+                action: connect::OwnerAction {
+                    payroll: -5.0,
+                    ..Default::default()
+                },
             },
             _ => return Err("closed".into()),
         };

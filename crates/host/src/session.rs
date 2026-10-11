@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use calibration::Calibration;
 use connect::{
     BuiltInCommissioner, BuiltInGm, BuiltInManager, BuiltInOwner, GmAction, GmAgent, GmStage,
-    GmTurn, Seats, commissioner_step, draft_turn, exec, free_agency_round, roster_stage,
-    set_tactics, start_season, start_with, team_actor, trade_round,
+    GmTurn, Seats, commissioner_step, draft_turn, free_agency_round, roster_stage, set_tactics,
+    start_season, start_with, team_actor, trade_round,
 };
 use gm::SurplusGm;
 use protocol::Actor;
@@ -510,19 +510,11 @@ impl Host {
                 Phase::Settling => {
                     commissioner_step(&mut self.world, &mut self.seats, &mut log)
                         .map_err(|e| e.to_string())?;
-                    // Owners set next year's payroll budgets.
+                    // The commissioner sets the rules; owners set budgets,
+                    // prices and ballpark spending.
+                    connect::rules_step(&mut self.world, &mut self.seats, &mut log);
                     for t in 0..TEAMS as u8 {
-                        let action = self.seats.owners[usize::from(t)]
-                            .act(&world::agents::OwnerObs::new(&self.world, t));
-                        let _ = exec(
-                            &mut self.world,
-                            &mut log,
-                            team_actor(Actor::owner, t),
-                            Command::SetBudget {
-                                team: t,
-                                payroll: action.payroll,
-                            },
-                        );
+                        connect::owner_step(&mut self.world, &mut self.seats, &mut log, t);
                     }
                 }
                 Phase::Drafting => break,

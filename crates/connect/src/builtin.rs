@@ -1,5 +1,8 @@
-use world::agents::{OwnerObs, draft_pick, free_agency_step, owner_budget_for, set_levels};
-use world::state::{Phase, Tactics};
+use world::agents::{
+    LeagueObs, OwnerObs, commissioner_rules_for, draft_pick, free_agency_step, owner_budget_for,
+    owner_build_for, owner_stance_for, owner_ticket_for, set_levels,
+};
+use world::state::{Phase, Rules, Tactics};
 
 use crate::agent::{CommissionerAgent, FieldManagerAgent, GmAgent, LiveAgent, OwnerAgent};
 use crate::model::{
@@ -34,6 +37,10 @@ impl CommissionerAgent for BuiltInCommissioner {
             Phase::FreeAgency => CommissionerAction::StartSeason,
         }
     }
+
+    fn rules(&mut self, obs: &LeagueObs) -> Option<Rules> {
+        commissioner_rules_for(obs)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -41,8 +48,12 @@ pub struct BuiltInOwner;
 
 impl OwnerAgent for BuiltInOwner {
     fn act(&mut self, obs: &OwnerObs) -> OwnerAction {
+        let stance = owner_stance_for(obs);
         OwnerAction {
             payroll: owner_budget_for(obs),
+            ticket: Some(owner_ticket_for(obs)),
+            build: owner_build_for(obs),
+            stance: (stance != obs.stance).then_some(stance),
         }
     }
 }

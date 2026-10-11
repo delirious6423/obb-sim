@@ -3,7 +3,7 @@ use sim_core::{GameView, ReliefCall, StealCall};
 use world::agents::GmObs;
 use world::command::Command;
 use world::player::{Level, PlayerId};
-use world::state::{Phase, Tactics, World};
+use world::state::{Phase, Stance, Tactics, World};
 
 /// What the commissioner sees: where the calendar stands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,9 +54,41 @@ impl CommissionerAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// What an owner does in an offseason. Only the payroll budget is required;
+/// the rest is left as it is when absent.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct OwnerAction {
     pub payroll: f64,
+    /// Average ticket price, dollars.
+    #[serde(default)]
+    pub ticket: Option<f64>,
+    /// Millions to spend on the ballpark.
+    #[serde(default)]
+    pub build: Option<f64>,
+    /// What the general manager is told the club is trying to do.
+    #[serde(default)]
+    pub stance: Option<Stance>,
+}
+
+impl OwnerAction {
+    /// The commands for club `team`, in the order they are tried.
+    #[must_use]
+    pub fn commands(self, team: u8) -> Vec<Command> {
+        let mut v = vec![Command::SetBudget {
+            team,
+            payroll: self.payroll,
+        }];
+        if let Some(price) = self.ticket {
+            v.push(Command::SetTicketPrice { team, price });
+        }
+        if let Some(amount) = self.build {
+            v.push(Command::BuildStadium { team, amount });
+        }
+        if let Some(stance) = self.stance {
+            v.push(Command::SetStance { team, stance });
+        }
+        v
+    }
 }
 
 /// When in the offseason a general manager is being asked.

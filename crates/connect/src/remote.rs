@@ -97,6 +97,7 @@ impl<T: Transport> OwnerAgent for ExternalAgent<T> {
                 self.mismatch(other.is_some());
                 OwnerAction {
                     payroll: obs.budget.clamp(obs.payroll_floor, obs.payroll_cap),
+                    ..OwnerAction::default()
                 }
             }
         }

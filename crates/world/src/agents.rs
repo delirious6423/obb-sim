@@ -9,7 +9,10 @@ use crate::command::Command;
 use crate::player::{Level, Origin, PlayerId, slot_bonus};
 use crate::rating::Kind;
 use crate::scout::{asking_salary, asking_years, opinion, war_of};
-use crate::state::{CREDIT, MAJORS_PER_KIND, MIN_SALARY, Phase, ROSTER_MAX_PER_KIND, World};
+use crate::state::{
+    CAPACITY_MAX, CREDIT, MAJORS_PER_KIND, MIN_SALARY, Phase, ROSTER_MAX_PER_KIND, Rules, Stadium,
+    Stance, TICKET_ELASTICITY, TICKET_RANGE, TICKET_REF, World,
+};
 
 /// Bonus ceiling relative to the slot at which a pick will still sign.
 const SIGNABLE: f64 = 1.5;
@@ -138,6 +141,9 @@ pub struct GmObs {
     pub payroll: f64,
     pub payroll_cap: f64,
     pub war_price: f64,
+    /// What the owner has told the general manager the club is trying to do.
+    #[serde(default)]
+    pub stance: Stance,
     pub roster: Vec<Seen>,
     pub free_agents: Vec<Seen>,
     /// Present only while this club is on the clock.
@@ -222,6 +228,7 @@ impl<'a> GmView<'a> {
             payroll: self.w.payroll(usize::from(self.team)),
             payroll_cap: self.w.rules.payroll_cap,
             war_price: self.w.rules.war_price,
+            stance: c.stance,
             roster: c.players.iter().map(|id| self.see(*id)).collect(),
             free_agents: self.w.free_agents.iter().map(|id| self.see(*id)).collect(),
             draft: self.draft(),
@@ -399,6 +406,16 @@ pub struct OwnerObs {
     pub budget: f64,
     pub payroll_floor: f64,
     pub payroll_cap: f64,
+    /// The club's ballpark and ticket price.
+    #[serde(default)]
+    pub stadium: Stadium,
+    /// Last season's average crowd per home game (thousands) and gate receipts.
+    #[serde(default)]
+    pub attendance_prev: f64,
+    #[serde(default)]
+    pub gate_prev: f64,
+    #[serde(default)]
+    pub stance: Stance,
 }
 
 impl OwnerObs {
@@ -418,7 +435,20 @@ impl OwnerObs {
             budget: c.budget,
             payroll_floor: w.rules.payroll_floor,
             payroll_cap: w.rules.payroll_cap,
+            stadium: c.stadium,
+            attendance_prev: w.finances[usize::from(team)]
+                .last()
+                .map_or(0.0, |f| f.attendance),
+            gate_prev: w.finances[usize::from(team)].last().map_or(0.0, |f| f.gate),
+            stance: c.stance,
         }
+    }
+
+    /// Whether last season's crowd filled the park (so true demand is not
+    /// known, only that it was at least the capacity).
+    #[must_use]
+    pub fn sold_out(&self) -> bool {
+        self.attendance_prev >= 0.98 * self.stadium.capacity
     }
 }
 
@@ -426,7 +456,7 @@ impl OwnerObs {
 /// earned last year and how much cash it holds.
 #[must_use]
 pub fn owner_budget_for(o: &OwnerObs) -> f64 {
-    let other = 80.0 + 10.0 * o.market;
+    let other = 80.0 + 10.0 * o.market + 0.1 * o.stadium.capacity * o.stadium.quality;
     let reserve = 0.2 * o.revenue_prev;
     let cash_push = 0.25 * (o.cash - reserve).clamp(-80.0, 40.0);
     (0.95 * o.revenue_prev - other + cash_push).clamp(o.payroll_floor, o.payroll_cap)
@@ -438,4 +468,152 @@ pub fn owner_budget(w: &World, team: u8) -> Command {
         team,
         payroll: owner_budget_for(&OwnerObs::new(w, team)),
     }
+}
+
+/// The ticket price an owner sets for the coming season. A sold-out park
+/// means demand is unknown but at least the capacity, so raise the price a
+/// step; otherwise demand is known from last year's crowd, and the best
+/// price is where demand just fills the park (move half way there).
+#[must_use]
+pub fn owner_ticket_for(o: &OwnerObs) -> f64 {
+    let st = &o.stadium;
+    let next = if o.attendance_prev <= 0.0 {
+        st.ticket
+    } else if o.sold_out() {
+        st.ticket * 1.08
+    } else {
+        let base = o.attendance_prev
+            / (libm::pow(st.ticket / TICKET_REF, -TICKET_ELASTICITY) * st.quality);
+        let fill = TICKET_REF * libm::pow(base * st.quality / st.capacity, 1.0 / TICKET_ELASTICITY);
+        0.5 * (st.ticket + fill)
+    };
+    next.clamp(TICKET_RANGE.0, TICKET_RANGE.1)
+}
+
+/// A ballpark project (millions) when the park sells out at a high price and
+/// the club can pay out of cash it does not need; none otherwise.
+#[must_use]
+pub fn owner_build_for(o: &OwnerObs) -> Option<f64> {
+    let st = &o.stadium;
+    let spare = o.cash - 0.4 * o.revenue_prev;
+    if o.sold_out()
+        && st.ticket > 1.3 * TICKET_REF
+        && st.capacity < CAPACITY_MAX - 1.0
+        && spare > 20.0
+    {
+        Some((0.25 * spare).clamp(10.0, 40.0))
+    } else {
+        None
+    }
+}
+
+/// What the owner tells the general manager, from how the club did.
+#[must_use]
+pub fn owner_stance_for(o: &OwnerObs) -> Stance {
+    if o.win_pct_prev >= 0.56 {
+        Stance::Contend
+    } else if o.win_pct_prev <= 0.42 {
+        Stance::Rebuild
+    } else {
+        Stance::Balanced
+    }
+}
+
+/// What a commissioner sees of one club's books.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClubBooks {
+    pub team: u8,
+    pub market: f64,
+    pub cash: f64,
+    pub revenue_prev: f64,
+    pub payroll: f64,
+}
+
+/// The commissioner's window on league finances (public books).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LeagueObs {
+    pub year: i32,
+    pub phase: Phase,
+    pub rules: Rules,
+    pub clubs: Vec<ClubBooks>,
+}
+
+impl LeagueObs {
+    #[must_use]
+    pub fn new(w: &World) -> Self {
+        Self {
+            year: w.year,
+            phase: w.phase,
+            rules: w.rules.clone(),
+            clubs: w
+                .clubs
+                .iter()
+                .enumerate()
+                .map(|(t, c)| ClubBooks {
+                    team: t as u8,
+                    market: c.market,
+                    cash: c.cash,
+                    revenue_prev: c.revenue_prev,
+                    payroll: w.payroll(t),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Revenue sharing the league office would set: more when clubs are short of
+/// cash or when small markets cannot keep up, less when everyone is flush.
+/// It never touches the payroll limits.
+#[must_use]
+pub fn commissioner_rules_for(l: &LeagueObs) -> Option<Rules> {
+    let n = l.clubs.len() as f64;
+    if n == 0.0 {
+        return None;
+    }
+    let broke = l
+        .clubs
+        .iter()
+        .filter(|c| c.cash < 0.05 * c.revenue_prev)
+        .count() as f64;
+    let flush = l
+        .clubs
+        .iter()
+        .filter(|c| c.cash > 0.5 * c.revenue_prev)
+        .count() as f64;
+    let mut rules = l.rules.clone();
+    if broke / n > 0.1 {
+        rules.revenue_sharing = (rules.revenue_sharing + 0.02).min(0.25);
+    } else if flush / n > 0.8 {
+        rules.revenue_sharing = (rules.revenue_sharing - 0.01).max(0.06);
+    }
+    (rules != l.rules).then_some(rules)
+}
+
+/// Everything the built-in owner does in an offseason, in order.
+#[must_use]
+pub fn owner_moves(w: &World, team: u8) -> Vec<Command> {
+    let o = OwnerObs::new(w, team);
+    owner_moves_for(&o)
+}
+
+/// The built-in owner's moves for an observation.
+#[must_use]
+pub fn owner_moves_for(o: &OwnerObs) -> Vec<Command> {
+    let team = o.team;
+    let mut v = vec![Command::SetBudget {
+        team,
+        payroll: owner_budget_for(o),
+    }];
+    let price = owner_ticket_for(o);
+    if (price - o.stadium.ticket).abs() > 0.005 {
+        v.push(Command::SetTicketPrice { team, price });
+    }
+    if let Some(amount) = owner_build_for(o) {
+        v.push(Command::BuildStadium { team, amount });
+    }
+    let stance = owner_stance_for(o);
+    if stance != o.stance {
+        v.push(Command::SetStance { team, stance });
+    }
+    v
 }
