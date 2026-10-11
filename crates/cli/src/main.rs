@@ -1,4 +1,10 @@
-//! Phase 0 demo: build a tiny league, play a game, replay the log and compare.
+//! Command-line front end.
+//!
+//! - no arguments: the Phase 0 demo (tiny league, replay check)
+//! - `game [seed] [--pbp]`: one game
+//! - `season`, `box`, `player`, `bench`: see `season_cmds`
+
+mod season_cmds;
 
 use league::Session;
 use protocol::{Actor, Command, GameId, TeamId};
@@ -32,9 +38,16 @@ fn print_game(args: &[String]) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("game") {
-        print_game(&args[1..]);
-        return;
+    match args.first().map(String::as_str) {
+        Some("game") => return print_game(&args[1..]),
+        Some("season" | "box" | "player" | "bench") => {
+            if let Err(message) = season_cmds::run(&args) {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+            return;
+        }
+        _ => {}
     }
     const SEED: u64 = 1;
     let mut session = Session::new(SEED);

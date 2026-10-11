@@ -22,5 +22,6 @@ Source: https://www.retrosheet.org
 | rand_chacha, rand_core | seeded RNG streams | MIT OR Apache-2.0 |
 | serde, serde_json | data formats | MIT OR Apache-2.0 |
 | thiserror | error types | MIT OR Apache-2.0 |
+| rayon (and its dependencies: crossbeam-*, either, rayon-core) | parallel days in the season simulator | MIT OR Apache-2.0 |
 
 Licenses above are the crates' published licenses; re-check with `cargo deny` before any release.

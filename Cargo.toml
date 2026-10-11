@@ -8,6 +8,7 @@ members = [
     "crates/storage",
     "crates/cli",
     "crates/calibration",
+    "crates/season",
 ]
 
 [workspace.package]
@@ -23,12 +24,15 @@ rand_core = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+rayon = "1"
 
 sim-core = { path = "crates/sim-core" }
 protocol = { path = "crates/protocol" }
 league = { path = "crates/league" }
 ai = { path = "crates/ai" }
 storage = { path = "crates/storage" }
+calibration = { path = "crates/calibration" }
+season = { path = "crates/season" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

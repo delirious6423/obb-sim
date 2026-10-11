@@ -10,8 +10,11 @@ name = "sim"
 path = "src/main.rs"
 
 [dependencies]
+calibration.workspace = true
 league.workspace = true
 protocol.workspace = true
+rayon.workspace = true
+season.workspace = true
 sim-core.workspace = true
 
 [lints]

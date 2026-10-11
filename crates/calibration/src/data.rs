@@ -90,6 +90,26 @@ pub struct RunEnvironment {
     /// which is what a universal designated hitter looks like.
     pub runs_per_team_game_dh: f64,
     pub extra_inning_share: f64,
+    /// League batting average of non-pitchers.
+    pub avg: f64,
+    /// Spread across the 150 team-seasons of 2015-2019 (non-pitcher batters).
+    pub team_season: TeamSeasonSpread,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct MeanSd {
+    pub mean: f64,
+    pub sd: f64,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct TeamSeasonSpread {
+    pub n: u32,
+    pub avg: MeanSd,
+    pub k_pct: MeanSd,
+    pub hr_per_game: MeanSd,
+    /// Home runs per plate appearance.
+    pub hr_pct: MeanSd,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,6 +130,17 @@ struct ParamsFile {
 pub struct Talent {
     pub batter_sd: [f64; OUTCOMES],
     pub pitcher_sd: [f64; OUTCOMES],
+}
+
+impl Talent {
+    /// A plausible spread for tests and demos that have no data file.
+    #[must_use]
+    pub fn generic() -> Self {
+        Self {
+            batter_sd: [0.27, 0.30, 0.65, 0.16, 0.13, 0.60, 0.40, 0.12],
+            pitcher_sd: [0.24, 0.24, 0.40, 0.12, 0.13, 0.30, 0.23, 0.08],
+        }
+    }
 }
 
 /// Everything calibration needs from the data file.

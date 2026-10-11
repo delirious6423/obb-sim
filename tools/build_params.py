@@ -26,6 +26,7 @@ OUTCOMES = ("k", "bb", "hbp", "single", "double", "triple", "hr", "ipo")
 MIN_QUALIFIER_PA = 300
 RUNNER_ONLY = ("NP", "SB", "CS", "POCS", "PO", "WP", "PB", "BK", "DI", "OA", "FLE")
 FORCE_KINDS = frozenset(("S", "BB", "HBP", "ROE", "FC"))
+AB_KINDS = frozenset(("S", "D", "T", "HR", "K", "OUT", "FC", "ROE"))
 OUT_KINDS = frozenset(("K", "OUT", "SH", "SF", "OTHER"))
 BALL_KINDS = ("OUT", "SH", "SF", "FC")
 OUTCOME_INDEX = {"K": 0, "BB": 1, "HBP": 2, "S": 3, "D": 4, "T": 5, "HR": 6}
@@ -78,6 +79,10 @@ class Totals:
         self.runs = 0
         self.extra_games = 0
         self.pitcher_outcome = [0] * 8
+        # (year, team) -> [pa, ab, hits, strikeouts, home runs] for non-pitcher batters
+        self.team_rows = {}
+        self.team_games = {}
+        self.cur_team = None
 
 
 def classify(base):
@@ -321,6 +326,18 @@ def process_play(tot, st, ev, batter, pit_id, pitches, count_it):
     if is_pa and not count_it:
         tot.pitcher_outcome[OUTCOME_INDEX.get(kind, 7)] += 1
 
+    if is_pa and count_it and tot.cur_team is not None:
+        row = tot.team_rows.setdefault(tot.cur_team, [0] * 5)
+        row[0] += 1
+        if kind in AB_KINDS:
+            row[1] += 1
+        if kind in ("S", "D", "T", "HR"):
+            row[2] += 1
+        if kind == "K":
+            row[3] += 1
+        if kind == "HR":
+            row[4] += 1
+
     if is_pa and count_it:
         oc = OUTCOME_INDEX.get(kind, 7)
         tot.pa += 1
@@ -397,7 +414,8 @@ def run_text(text, tot):
         if line.startswith("id,"):
             flush_pending()
             finish_game(game, tot)
-            game = {"regular": None}
+            ident = line.split(",")[1] if "," in line else ""
+            game = {"regular": None, "home": ident[:3], "year": ident[3:7], "vis": None}
             st = fresh_state()
             half = None
             pit = {}
@@ -405,6 +423,8 @@ def run_text(text, tot):
             continue
         if game is None:
             continue
+        if line.startswith("info,visteam,"):
+            game["vis"] = line.split(",")[2].strip()
         if line.startswith("info,gametype,"):
             game["regular"] = line.split(",")[2].strip() == "regular"
         elif game["regular"] is False:
@@ -428,6 +448,7 @@ def run_text(text, tot):
                 half = key
                 st = fresh_state()
             fielding_side = 1 - int(f[2])
+            tot.cur_team = (game["year"], game["vis"] if f[2] == "0" else game["home"])
             count_it = pos.get(f[3]) != "1"  # skip pitchers batting
             process_play(tot, st, f[6], f[3], pit.get(fielding_side), f[5], count_it)
     flush_pending()
@@ -446,6 +467,9 @@ def finish_game(game, tot):
         tot.games += 1
     else:
         return
+    for team in (game["home"], game["vis"]):
+        key = (game["year"], team)
+        tot.team_games[key] = tot.team_games.get(key, 0) + 1
     if game.get("max_inn", 0) > 9:
         tot.extra_games += 1
 
@@ -540,7 +564,26 @@ def build(tot):
     value = lambda rates: sum(r * w for r, w in zip(rates, LINEAR_WEIGHTS))
     pitcher_rates = [x / pitcher_pa for x in tot.pitcher_outcome] if pitcher_pa else league_vals
     dh_gain = (pitcher_pa / team_games) * (value(league_vals) - value(pitcher_rates))
+    rows = [(tot.team_rows[k], tot.team_games[k]) for k in sorted(tot.team_rows) if tot.team_games.get(k)]
+    hits = sum(r[2] for r, _ in rows)
+    abs_ = sum(r[1] for r, _ in rows)
+
+    def dist(values):
+        n = len(values)
+        mean = sum(values) / n
+        sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1))
+        return {"mean": mean, "sd": sd}
+
+    team_season = {
+        "n": len(rows),
+        "avg": dist([r[2] / r[1] for r, _ in rows]),
+        "k_pct": dist([r[3] / r[0] for r, _ in rows]),
+        "hr_per_game": dist([r[4] / g for r, g in rows]),
+        "hr_pct": dist([r[4] / r[0] for r, _ in rows]),
+    }
     run_env = {
+        "avg": hits / abs_,
+        "team_season": team_season,
         "runs_per_team_game": tot.runs / team_games,
         "runs_per_team_game_dh": tot.runs / team_games + dh_gain,
         "extra_inning_share": tot.extra_games / tot.games,

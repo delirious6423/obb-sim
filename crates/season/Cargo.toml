@@ -1,0 +1,16 @@
+[package]
+name = "season"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+calibration.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
+rayon.workspace = true
+sim-core.workspace = true
+
+[lints]
+workspace = true

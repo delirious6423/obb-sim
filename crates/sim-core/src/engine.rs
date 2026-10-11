@@ -42,6 +42,9 @@ struct Sim<'a, S: Sink> {
     /// The plate appearance being resolved is a home run (all runners score even
     /// when the winning run has already crossed).
     home_run_pa: bool,
+    /// Outs the half-inning would have had if no batter had reached on an
+    /// error; runs scoring after that are unearned.
+    virtual_outs: u8,
 }
 
 /// Play one game and return its result and statistics.
@@ -76,6 +79,7 @@ pub fn simulate_game<S: Sink>(
         outing_p0: [0; 2],
         pa_runs: 0,
         home_run_pa: false,
+        virtual_outs: 0,
     };
     sim.run();
     sim.sink.emit(GameEvent::GameOver);
@@ -125,6 +129,7 @@ impl<S: Sink> Sim<'_, S> {
     fn play_half(&mut self) {
         self.bases = [None; 3];
         self.outs = 0;
+        self.virtual_outs = 0;
         self.sink.emit(GameEvent::HalfInningStart {
             inning: self.inning,
             half: self.half(),
@@ -174,7 +179,7 @@ impl<S: Sink> Sim<'_, S> {
         b.r = b.r.saturating_add(1);
         let p = &mut self.out.pitch[fld][usize::from(runner.pitcher)];
         p.r = p.r.saturating_add(1);
-        if runner.earned && earned_ok {
+        if runner.earned && earned_ok && self.outs + self.virtual_outs < 3 {
             p.er = p.er.saturating_add(1);
         }
         self.pa_runs = self.pa_runs.saturating_add(1);
@@ -359,6 +364,7 @@ impl<S: Sink> Sim<'_, S> {
                 ball = Some(kind);
                 error = self.chance(f.error_rate);
                 if error {
+                    self.virtual_outs += 1;
                     // Reaches on an error: unearned for him and for runs forced in.
                     self.batter_to_first(
                         Runner {

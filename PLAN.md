@@ -62,11 +62,12 @@ Gate: 1,000 simulated seasons give realistic AVG, ERA, HR and K% distributions; 
 - [x] (2.0a) Explain runs/team-game 4.74 vs real ~4.5 (errors, steals, extra-inning runner, walk-offs); fix cause; gate runs/team-game at ±3% relative
 - [x] (2.0b) Walk-off: no runs credited past the winning run
 - [x] (2.0c) Targeted test for the ghost-runner-on-base case; fix if it reproduces, else keep test and log in Known gaps
-- [ ] Schedule generator, standings, playoffs
-- [ ] rayon parallel days with per-game RNG streams (results independent of thread count)
-- [ ] Speed benchmarks in CI
-- [ ] Thin cli viewer: standings, box scores, player pages
-- [ ] Gate run + reviewer + log entry
+- [x] Schedule generator, standings, playoffs
+- [x] rayon parallel days with per-game RNG streams (results independent of thread count)
+- [x] Speed benchmarks in CI
+- [x] Thin cli viewer: standings, box scores, player pages
+- [x] Gate run (1,000 seasons; all checks PASS, see log)
+- [ ] Reviewer + fixes + log entry
 
 ## Phase 3: players over time
 
@@ -112,9 +113,14 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - `League::from_events` leaves `commands_applied` at 0 (events carry no commands).
 - Role/team binding covers only commands that name teams; commands that name a game or player will need their team resolved from state in `league::permissions::target_teams`.
 
+- Season: no series, travel, off-day or weather structure; fixed lineup and 5-man rotation all season (no injuries/rest until Phase 3); playoffs seeded by wins, run difference, club number (no head-to-head).
+- Unearned runs: engine now uses the virtual-outs rule, but non-reached-base errors are not modelled, so ER/R is 0.96 vs about 0.93 real; league ERA 4.56 vs about 4.4 for the DH-equivalent environment.
+- Season gate bands for spread (0.6-1.5x of real team-season SD, ERA/win% ranges) were fixed before the first run; team AVG spread runs 1.21x real, K%/HR 0.8x.
+
 ## Log
 
 - **Phase 0**: workspace, deterministic sim-core, command/event league, role checks. CI green on ubuntu, macOS, Windows; golden values identical on all three.
 - **Phase 1**: log5 engine, baserunning, fielding, relief, box score/play-by-play; Retrosheet 2015-2019 aggregate tool; calibration crate. Gate PASS on 100k games: K +0.58%, BB -0.44%, HR/PA -0.42% (all within ±3%). Fixed a parser bug (force outs counted batter out) found by sanity check; reviewer found no blockers; fixed bases-loaded double play advancement. CI green on 3 OSes.
 - **Phase 2.0 (pre-work)**: runs/team-game explained (pitcher batting vs universal DH +0.22, extra-inning runner +0.04; not an engine bug) and gated at ±3% against a DH-equivalent target (sim 4.697 vs 4.699). `GameParams.extra_inning_runner` rule flag added (calibration uses 2015-2019 rules). Walk-off no longer credits runs past the winning run (home runs excepted). Ghost-runner guard test added.
+- **Phase 2 (built)**: `season` crate: 162-game schedule for 30 clubs (divisions, interleague rotation, home/away balanced, days), play loop with rayon-parallel days and per-game streams (game id = season<<20 | game), standings, 12-team playoffs with series, summaries; cli `season`, `box [--pbp]`, `player`, `bench`; CI runs `bench`. Gate (`cargo test --release -p season -- --ignored season_gate --nocapture`): 1,000 seasons in 1.6 s on 10 threads, identical digests on 1 thread and all threads; league AVG .2556 vs .2539, K% 21.10 vs 21.14, HR/PA 3.207 vs 3.204, ERA 4.56, team-season spreads inside bands. Two gate-definition fixes before any pass: HR target changed from HR/game to HR/PA (per-game compared different PA counts); earned runs now use virtual outs after an error (ERA was 4.66, ER/R 0.98).
 - **Phase 1 tidy-up**: four small commits closing the remaining review gaps (see checklist).
