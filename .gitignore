@@ -10,3 +10,6 @@
 # Rust leftovers
 **/*.rs.bk
 *.pdb
+
+# Internal calibration data (never commit)
+/data/internal/

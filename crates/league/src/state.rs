@@ -214,16 +214,31 @@ impl League {
     /// Authorize the actor, decide the command, then apply its events.
     /// The only way a command changes the league.
     ///
-    /// `decide` produces events that `apply` accepts, so apply cannot fail
-    /// halfway through a command's events.
+    /// A command's events are applied atomically (see `apply_atomic`).
     pub fn execute(&mut self, actor: &Actor, command: &Command) -> Result<Vec<Event>, LeagueError> {
         authorize(actor, command)?;
         let events = self.decide(command)?;
-        for event in &events {
-            self.apply(event)?;
-        }
+        self.apply_atomic(&events)?;
         self.commands_applied = self.commands_applied.saturating_add(1);
         Ok(events)
+    }
+
+    /// Apply all of a command's events or none of them. One event needs no
+    /// copy, because `apply` checks before it changes anything. Several events
+    /// are applied to a clone that replaces `self` only if all of them fit.
+    fn apply_atomic(&mut self, events: &[Event]) -> Result<(), LeagueError> {
+        match events {
+            [] => Ok(()),
+            [event] => self.apply(event),
+            _ => {
+                let mut next = self.clone();
+                for event in events {
+                    next.apply(event)?;
+                }
+                *self = next;
+                Ok(())
+            }
+        }
     }
 
     /// Rebuild a league by applying events to a fresh league. Any event that
@@ -428,6 +443,29 @@ mod tests {
             .unwrap_err();
         assert_eq!(err, LeagueError::UnknownGame(GameId(3)));
         assert_eq!(league, before);
+    }
+
+    #[test]
+    fn multi_event_apply_is_all_or_nothing() {
+        let mut league = League::new(1);
+        let good = Event::TeamCreated {
+            team: TeamId(0),
+            name: "Harbor City Gulls".into(),
+        };
+        let bad = Event::GamePlayed {
+            game: GameId(9),
+            home_runs: 2,
+            away_runs: 1,
+        };
+        let before = league.clone();
+        let err = league.apply_atomic(&[good.clone(), bad]).unwrap_err();
+        assert_eq!(err, LeagueError::UnknownGame(GameId(9)));
+        assert_eq!(
+            league, before,
+            "first event must not survive a later failure"
+        );
+        league.apply_atomic(&[good]).unwrap();
+        assert_eq!(league.teams().count(), 1);
     }
 
     #[test]

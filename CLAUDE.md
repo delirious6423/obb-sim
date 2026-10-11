@@ -33,3 +33,7 @@ Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` a
 - Adding a `Command` variant must force a decision in `league::permissions` (`required_role` and `target_teams`; the matches are exhaustive on purpose).
 - Every command is issued by an `Actor` (role + team; the commissioner has no team). `League::execute` always authorizes, so `Session::submit` and log replay cannot skip it.
 - `League::apply` is fallible and strict. `from_events` and `Deserialize` validate; never trust loaded data.
+
+## Working method
+
+`PLAN.md` is the project's memory and the source of truth for what to do next. After a context reset, read it and this file, then continue at the first unticked item. Log every new dependency or data source in `THIRD_PARTY.md`. Calibration data lives in git-ignored `data/internal/` and holds no real player id, name or stat line.
