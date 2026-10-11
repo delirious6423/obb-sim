@@ -116,7 +116,52 @@ Design (decided, 2026-10-11)
 - [x] `host` crate: protocol, session, views, threaded client; headless gate test (`crates/host/tests/headless.rs`) PASSES
 - [x] egui UI (`ui` crate, bin `game`): new game with difficulty presets and custom levers, home with sim bar (progress, cancel), standings, schedule and box score, roster (sortable), player page, depth chart and tactics, free agents, trades, draft, finances, saves (save, quick save, load, delete), settings, credits. Compiles and starts; NOT yet played through by a person (see Known gaps)
 - [x] CI speed gate: `cargo run --release -p host --example bench -- --check`. Profiled on a development laptop (Apple Silicon, 3 runs): found league 0.70 s, 30 single-day requests 0.11 s, full 2430-game season 0.13 s, offseason (finish, draft, free agency, next season) 0.49 s. Targets about 6x that for shared CI runners: 4.0 / 2.0 / 1.5 / 3.0 s.
-- [ ] Independent reviewer for the finished phase (backend reviewed: findings fixed; UI reviewed: findings fixed) + final check of CI per job
+- [x] Independent reviewers (backend, UI, Phase 6 additions): findings fixed or logged under Known gaps. CI green per job (ubuntu, macos, windows) on 8e4d820.
+
+## Phase 6: alpha (done 2026-10-11)
+
+- [x] README.md, GUIDE.md (player guide), `scripts/build.sh` (clean release build, self-test, `dist/`), `game --self-test`
+- [x] Roster-editing tool for the fictional data: `cargo run --release -p cli -- roster export|import` (renames clubs and players in a save; writes a new slot, 9 tests)
+- [x] THIRD_PARTY audit: `python3 tools/licenses.py` (455 crates, all with a permissive option); font notices in the Credits screen
+- [x] `.github/workflows/release.yml`: clean build + self-test on all three systems (green by hand on db428f5, and on the tag)
+- [x] Tag v0.1
+
+## STOP: summary for the playtest (written 2026-10-11)
+
+**Run it**
+
+```bash
+cargo run --release -p ui
+```
+
+(Or `scripts/build.sh` for a checked build in `dist/`.) Saves are in `~/.baseball-sim/saves`.
+
+**What to try**
+1. New game: pick a club and difficulty (try Rookie, then Hall of Fame, or Custom levers). Founding takes about a second.
+2. Home: advance a day, a week, to the end of the season. Press Cancel in the middle of a long step.
+3. Depth chart: move players between levels, Auto-arrange, tick Smart tactics.
+4. After the season: Finish season, then the Draft (draft or pass), then Trades and Free agents, then Start next season.
+5. Saves: save, quick-save, quit, load. Try the roster tool from GUIDE.md.
+6. Look for: screens that stay on a spinner, buttons that do nothing, wrong numbers, a roster you cannot make legal.
+
+**What is rough**
+- The UI was checked by compile, clippy, a start-up run, a headless self-test and the protocol gate test. No person has played it yet, so layout and feel are untested.
+- The schedule shows day numbers, not dates. Box scores exist for the current season only. A save is a snapshot; there is no command log. AI general managers restart fresh after a load, so play after a load can differ from an uninterrupted game.
+- Draft class mean career WAR is about twice the sourced range (see FAILING GATES), so top draftees are too good.
+- Trades between AI clubs are rare (3 proposed, 0 accepted in one 5-year run).
+- Known-gap list in the section below has the rest (save-store edge cases, case-colliding slot names, no check of the calibration id on load).
+- Speed: found league 0.7 s, season 0.13 s, offseason 0.5 s on a laptop; CI gate has loose targets (4.0 / 2.0 / 1.5 / 3.0 s).
+
+**FAILING GATES**
+- `draft_gate` (Phase 3): reach rates are in range for picks 1-30 and 31-90, but mean career WAR per draftee is about 2x the sourced ranges in every bucket (picks 1-10 about 23-26 vs 9.5-12.8; 11-30 about 12-13 vs 4.5-8.7; 31-90 about 4.2-4.5 vs 0.8-3.3); bust rates are low; picks 91-300 reach 0.13 vs 0.17-0.35. Two root-cause attempts used. Thresholds not changed. It fails on all five seeds.
+- No other gate is failing: exploit-bot ladder, manager edge, stability (5 seeds), information, Phase 5 headless gate and the speed gate all pass.
+
+**Decisions I made that you may want to change**
+- `data/params.json` (6 KB of league-wide aggregates, no individual data) is committed and embedded so a clean checkout can run.
+- A save is a world snapshot; no command log is stored.
+- Roster editing is an offline tool on saves (names only), not an in-game screen.
+
+Phase 7 (owner and commissioner roles) and Phase 8 (online leagues) are NOT started. Waiting for the user to playtest and reply "continue".
 
 ## Draft bands (Phase 3)
 
