@@ -44,10 +44,10 @@ Engine (`sim-core`; pure; no I/O; data passed in)
 - [x] Non-ignored smoke test that plays a full game (runs in CI)
 
 Calibration (kept out of git)
-- [ ] `data/internal/` in `.gitignore`; download Retrosheet 2015-2019 event files (approved) into it
-- [ ] `tools/`: parse events; write league rates + talent spread to `data/internal/params.json`. No player id or name written anywhere.
+- [x] `data/internal/` in `.gitignore`; download Retrosheet 2015-2019 event files (approved) into it
+- [x] `tools/`: parse events; write league rates + talent spread to `data/internal/params.json`. No player id or name written anywhere.
 - [x] Calibration crate: fictional rosters (generated names, talent drawn from the spread), 100k games, table of simulated vs target
-- [ ] `THIRD_PARTY.md`: Retrosheet notice (no Lahman entry; not used)
+- [x] `THIRD_PARTY.md`: Retrosheet notice (no Lahman entry; not used)
 - [ ] Gate run + reviewer subagent + log entry
 
 Decisions so far
