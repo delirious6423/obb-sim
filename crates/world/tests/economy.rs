@@ -297,3 +297,30 @@ fn a_rescued_club_loses_the_contracts_that_broke_it() {
     let again = World::restore(GameParams::reference(), Model::generic(), w.snapshot());
     assert!(again.is_ok(), "{:?}", again.err());
 }
+
+/// A rescue makes the crowd of that year useless to the owner: it was drawn
+/// at the old price. The owner's view reports no crowd for it, while a club
+/// that was not rescued still reports its real crowd.
+#[test]
+fn a_rescued_year_reports_no_crowd_to_the_owner() {
+    use world::agents::{OwnerObs, last_crowd};
+    let mut w = founded(7);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::PlaySeason).unwrap();
+    w.execute(&c, Command::PlayPlayoffs).unwrap();
+    w.clubs[0].cash = -10.0 * CREDIT;
+    w.execute(&c, Command::SettleFinances).unwrap();
+    assert!(w.finances[0][0].rescued);
+    assert!(w.finances[0][0].attendance > 0.0, "test needs a real crowd");
+
+    let rescued = OwnerObs::new(&w, 0);
+    assert_eq!(rescued.attendance_prev, 0.0);
+    assert_eq!(rescued.gate_prev, 0.0);
+    assert!(!rescued.sold_out());
+    assert_eq!(last_crowd(&w, 0), (0.0, 0.0));
+
+    let healthy = OwnerObs::new(&w, 1);
+    assert!(!w.finances[1][0].rescued);
+    assert_eq!(healthy.attendance_prev, w.finances[1][0].attendance);
+    assert_eq!(healthy.gate_prev, w.finances[1][0].gate);
+}

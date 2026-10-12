@@ -3,7 +3,9 @@
 //! public; true talent is never read.
 
 use season::{Schedule, division_of, league_of};
-use world::agents::{ClubBooks, GmView, LeagueObs, OwnerObs, Seen, owner_ticket_for};
+use world::agents::{
+    ClubBooks, GmView, LeagueObs, OwnerObs, Seen, last_crowd, owner_ticket_for,
+};
 use world::player::{Level as WLevel, Origin, Player, PlayerId};
 use world::rating::Kind;
 use world::state::{Phase, Rules, Stance as WStance, TEAMS, TICKET_RANGE, World};
@@ -536,7 +538,7 @@ pub(crate) fn league_office(w: &World, stage: Stage, can_act: bool) -> LeagueVie
                 cash: b.cash,
                 revenue_prev: b.revenue_prev,
                 ticket: c.stadium.ticket,
-                attendance_prev: w.finances[t].last().map_or(0.0, |f| f.attendance),
+                attendance_prev: last_crowd(w, b.team).0,
                 budget: c.budget,
             }
         })
