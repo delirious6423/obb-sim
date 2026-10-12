@@ -1,5 +1,5 @@
 use world::agents::{LeagueObs, OwnerObs};
-use world::state::{Rules, Tactics};
+use world::state::{Rules, Tactics, Usage};
 
 use crate::model::{
     CommissionerAction, CommissionerObs, FieldManagerObs, GameObs, GmAction, GmTurn, OwnerAction,
@@ -34,6 +34,13 @@ pub trait GmAgent {
 pub trait FieldManagerAgent {
     /// How the club's games are managed this season.
     fn tactics(&mut self, obs: &FieldManagerObs) -> Tactics;
+
+    /// The club's playing-time setup for this season (platoons, bullpen,
+    /// pitch limits, relief rules): `Some(None)` goes back to the league's
+    /// automatic setup, `None` (the default) leaves it as it is.
+    fn usage(&mut self, _obs: &FieldManagerObs) -> Option<Option<Usage>> {
+        None
+    }
 }
 
 /// A field manager deciding inside games, one decision at a time.

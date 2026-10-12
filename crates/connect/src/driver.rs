@@ -133,6 +133,12 @@ pub fn set_tactics(w: &mut World, seats: &mut Seats, log: &mut Vec<Event>) {
             tactics: w.clubs[usize::from(t)].tactics,
         };
         let choice: Tactics = seats.managers[usize::from(t)].tactics(&obs);
+        if let Some(usage) = seats.managers[usize::from(t)].usage(&obs) {
+            let cmd = Command::SetUsage { team: t, usage };
+            if let Err(e) = exec(w, log, team_actor(Actor::field_manager, t), cmd) {
+                refuse(seats, w, t, "field manager", &e);
+            }
+        }
         if choice != obs.tactics {
             let cmd = Command::SetTactics {
                 team: t,
