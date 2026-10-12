@@ -268,8 +268,8 @@ pub enum Event {
     RulesSet {
         rules: Rules,
     },
-    /// Before opening day a club below its credit line gets new owners:
-    /// fresh capital, ticket price and stance reset, payroll budget at the floor.
+    /// Old saves only: the league used to rescue a club deep in debt. It is
+    /// never produced now and applying it changes nothing.
     ClubRescued {
         team: u8,
     },

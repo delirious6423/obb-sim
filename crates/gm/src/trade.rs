@@ -524,7 +524,11 @@ pub fn deals(obs: &GmObs, t: &TradeObs, p: &Profile, seed: u64, sent: &[Sent]) -
 
 impl Search<'_> {
     fn with(&self, f: &ClubFacts, sent: &[Sent]) -> Option<Deal> {
-        let their_lens = Lens::of(stance_from_record(f.win_pct_prev), f.win_pct_prev, false);
+        let their_lens = Lens::of(
+            stance_from_record(f.win_pct_prev),
+            f.win_pct_prev,
+            f.in_debt,
+        );
         let theirs: Vec<Piece> = self
             .t
             .market
@@ -536,7 +540,8 @@ impl Search<'_> {
         let them = Side {
             count: [usize::from(f.batters), usize::from(f.pitchers)],
             payroll: f.payroll,
-            room: self.cap,
+            // A club in debt may take on no salary.
+            room: if f.in_debt { f.payroll } else { self.cap },
         };
         // Players worth more on the other side than here, best first:
         // (joint gain, value to me, value to them, player).

@@ -1,6 +1,7 @@
 use world::agents::{
     GmObs, LeagueObs, OwnerObs, Seen, commissioner_rules_for, draft_pick, free_agency_step,
-    owner_budget_for, owner_build_for, owner_stance_for, owner_ticket_for, set_levels,
+    owner_budget_for, owner_build_for, owner_stance_for, owner_ticket_for, salary_dumps,
+    set_levels,
 };
 use world::player::PlayerId;
 use world::rating::Kind;
@@ -64,7 +65,8 @@ impl OwnerAgent for BuiltInOwner {
 pub struct BuiltInGm;
 
 impl GmAgent for BuiltInGm {
-    /// Answers offers (it never makes any).
+    /// Answers offers; a club in debt also offers its dearest contracts to
+    /// shed salary (a solvent one proposes nothing).
     fn trades(&self) -> bool {
         true
     }
@@ -74,7 +76,15 @@ impl GmAgent for BuiltInGm {
             GmStage::Draft => draft_pick(&turn.obs).into_iter().collect(),
             GmStage::FreeAgency => free_agency_step(&turn.obs).into_iter().collect(),
             GmStage::Roster => set_levels(&turn.obs),
-            GmStage::Trade => return plain_trade_answers(&turn.obs),
+            GmStage::Trade => {
+                let mut out = plain_trade_answers(&turn.obs);
+                out.extend(
+                    salary_dumps(&turn.obs)
+                        .iter()
+                        .filter_map(GmAction::from_command),
+                );
+                return out;
+            }
         };
         commands.iter().filter_map(GmAction::from_command).collect()
     }
@@ -113,10 +123,7 @@ pub fn plain_trade_answers(obs: &GmObs) -> Vec<GmAction> {
                     && (after >= MAJORS_PER_KIND || n(&o.give, k) >= n(&o.get, k))
             });
         let net = pay(&o.give) - pay(&o.get);
-        let affordable = net <= 1e-9
-            || (obs.cash >= 0.0
-                && payroll + net <= obs.budget.max(obs.payroll) + 1e-9
-                && payroll + net <= obs.payroll_cap + 1e-9);
+        let affordable = obs.may_take_salary(payroll, net);
         let present = o.get.iter().all(|s| roster.contains(&s.id))
             && o.give.iter().all(|s| {
                 !gone.contains(&s.id)

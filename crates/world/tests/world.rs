@@ -290,7 +290,7 @@ fn releasing_a_player_pays_off_the_contract() {
                 p.contract.map(|c| c.salary * f64::from(c.years))?,
             ))
         })
-        .filter(|(t, _, owed)| *owed < w.clubs[usize::from(*t)].cash + world::state::CREDIT)
+        .filter(|(t, _, owed)| *owed <= w.clubs[usize::from(*t)].cash)
         .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
         .unwrap();
     assert!(owed > 1.0);
@@ -309,7 +309,7 @@ fn releasing_a_player_pays_off_the_contract() {
 }
 
 #[test]
-fn a_club_cannot_spend_below_its_credit_line() {
+fn a_club_cannot_spend_below_zero_cash() {
     let (mut w, _) = to_progressed(23);
     let (team, id) = w
         .players
@@ -322,7 +322,8 @@ fn a_club_cannot_spend_below_its_credit_line() {
         .map(|p| (p.team.unwrap(), p.id))
         .next()
         .unwrap();
-    w.clubs[usize::from(team)].cash = -world::state::CREDIT;
+    // Some cash, but less than the buyout: there is no credit line.
+    w.clubs[usize::from(team)].cash = 1.0;
     let before = w.clone();
     let err = w
         .execute(&gm(team), Command::ReleasePlayer { team, player: id })
