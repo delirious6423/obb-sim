@@ -615,14 +615,16 @@ impl Host {
         self.roles.owner || self.roles.commissioner
     }
 
-    /// Owner budgets must sit inside the payroll limits. A rule change made
-    /// after the owners acted can leave one outside, so clamp them at close.
+    /// Owner budgets must sit inside the payroll limits and under what the
+    /// lenders will back. A rule change, or a stadium build made after the
+    /// owner set the budget, can leave one outside, so clamp them at close.
     fn clamp_budgets(&mut self) -> Result<(), String> {
-        let (floor, cap) = (self.world.rules.payroll_floor, self.world.rules.payroll_cap);
+        let floor = self.world.rules.payroll_floor;
         let mut moved = 0;
         for t in 0..TEAMS as u8 {
             let budget = self.world.clubs[usize::from(t)].budget;
-            let fit = budget.clamp(floor, cap);
+            let top = self.world.rules.payroll_cap.min(self.world.budget_limit(usize::from(t)));
+            let fit = budget.clamp(floor, top);
             if fit != budget {
                 self.world
                     .execute(

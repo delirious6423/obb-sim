@@ -300,3 +300,35 @@ fn the_owner_sees_the_lenders_limit() {
     ok(c.call(Request::Act(Action::SetBudget { payroll: top })));
     assert!(near(owner(&c).budget, top));
 }
+
+/// A stadium built after the budget was set can lower the lenders' limit
+/// below it. Closing the books must bring the budget back under the limit.
+#[test]
+fn a_budget_above_the_lenders_limit_is_brought_under_it_at_close() {
+    let dir = tempfile_dir("close");
+    let c = client(&dir);
+    let roles = Roles {
+        gm: false,
+        owner: true,
+        commissioner: true,
+    };
+    new_game(&c, roles);
+    play_season(&c);
+    ok(c.call(Request::Advance(Advance::FinishSeason)));
+
+    let cap = league(&c).rules.payroll_cap;
+    ok(c.call(Request::Act(Action::SetBudget { payroll: cap })));
+    // Spend the club's cash (up to 200) so the lenders' room shrinks. The
+    // build may not take the club past its credit line.
+    let cash = owner(&c).cash;
+    let amount = cash.min(200.0);
+    assert!(amount > 0.0, "the club needs cash to build, has {cash}");
+    ok(c.call(Request::Act(Action::BuildStadium { amount })));
+    let before = owner(&c);
+    assert!(before.budget_limit < cap, "the build should bind the limit");
+    assert!(before.budget > before.budget_limit);
+
+    ok(c.call(Request::Advance(Advance::FinishSeason)));
+    let after = owner(&c);
+    assert!(after.budget <= after.budget_limit + 1e-9, "{after:?}");
+}
