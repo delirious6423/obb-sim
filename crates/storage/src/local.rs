@@ -26,15 +26,16 @@ use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags};
-use sha2::{Digest, Sha256};
 
 use crate::FORMAT_VERSION;
+use crate::bundle::{self, BUNDLE_EXTENSION, MAX_BUNDLE_BYTES, sha256_hex};
 use crate::db;
 use crate::error::{Result, StoreError};
 use crate::model::{Manifest, SaveData, SaveKind};
-use crate::slot::SlotId;
+use crate::slot::{MAX_SLOT_LEN, SlotId};
 use crate::store::{Loaded, SaveStore, SlotSummary};
 
 /// Default number of rotating autosave slots (`auto-1` to `auto-3`).
@@ -51,6 +52,72 @@ const SAV_LOAD_TMP: &str = ".sav.load.tmp";
 const MANIFEST: &str = ".manifest.json";
 const MANIFEST_TMP: &str = ".manifest.json.tmp";
 const MANIFEST_BAK: &str = ".manifest.json.bak";
+const IMPORT_LOAD_TMP: &str = ".import.load.tmp";
+/// Highest `-N` suffix tried when a name is taken. Past this, export or
+/// import fails.
+const MAX_NAME_TRIES: u32 = 10_000;
+
+/// A save bundle that passed every check, ready to be imported.
+///
+/// Nothing from the file is written to the save folder until
+/// [`LocalStore::import_opened`] is called.
+#[derive(Debug, Clone)]
+pub struct OpenedBundle {
+    /// Slot name the bundle was exported from. It is sanitised before use,
+    /// and used only when the caller gives no name.
+    pub suggested_name: String,
+    /// The manifest as exported.
+    pub manifest: Manifest,
+    /// The save contents, read and checked in a scratch folder.
+    pub data: SaveData,
+}
+
+impl OpenedBundle {
+    /// Reads and checks a `.bsave` file. Refuses files over
+    /// [`MAX_BUNDLE_BYTES`]. Validation runs in a scratch folder under the
+    /// system temp directory, which is removed afterwards. The save folder is
+    /// not touched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Bundle`] for a bad marker, bad framing or a bad
+    /// checksum, [`StoreError::Corrupt`] when the `.sav` does not match the
+    /// manifest or cannot be read, and [`StoreError::NewerVersion`] for a
+    /// newer format.
+    pub fn read(path: &Path) -> Result<Self> {
+        let len = fs::metadata(path)?.len();
+        if len > MAX_BUNDLE_BYTES {
+            return Err(StoreError::Bundle(format!(
+                "file is {len} bytes; the limit is {MAX_BUNDLE_BYTES}"
+            )));
+        }
+        let bytes = fs::read(path)?;
+        let decoded = bundle::decode(&bytes)?;
+        let scratch = scratch_dir()?;
+        let result = (|| {
+            let sav = scratch.join("import.sav");
+            fs::write(&sav, &decoded.sav)?;
+            let data = db::read_file(&sav, &scratch.join(IMPORT_LOAD_TMP))
+                .map_err(|e| StoreError::Corrupt(format!("bundle .sav: {e}")))?;
+            Ok(Self {
+                suggested_name: bundle::sanitise_slot_name(&decoded.slot_hint),
+                manifest: decoded.manifest,
+                data,
+            })
+        })();
+        let _ = fs::remove_dir_all(&scratch);
+        result
+    }
+}
+
+fn scratch_dir() -> Result<PathBuf> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let dir = std::env::temp_dir().join(format!("bsave-import-{}-{nanos}", std::process::id()));
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
 
 /// Every suffix a slot can own on disk.
 const ALL_SUFFIXES: [&str; 7] = [
@@ -298,14 +365,14 @@ impl LocalStore {
         }
     }
 
-    /// Tries one `(sav, manifest)` pair. Returns the verified save or the
-    /// reason it failed.
+    /// Tries one `(sav, manifest)` pair. Returns the verified save, with the
+    /// `.sav` bytes it was read from, or the reason it failed.
     fn try_candidate(
         &self,
         slot: &SlotId,
         sav_suffix: &str,
         manifest_suffix: &str,
-    ) -> Result<(Manifest, SaveData)> {
+    ) -> Result<(Manifest, SaveData, Vec<u8>)> {
         let manifest = read_manifest_at(&self.file(slot, manifest_suffix), slot)?;
         check_manifest_version(manifest.format_version)?;
         let sav = self.file(slot, sav_suffix);
@@ -318,8 +385,147 @@ impl LocalStore {
             )));
         }
         let data = db::read_file(&sav, &self.file(slot, SAV_LOAD_TMP))?;
-        Ok((manifest, data))
+        Ok((manifest, data, bytes))
     }
+
+    /// Loads a slot like [`SaveStore::load`], and also returns the `.sav`
+    /// bytes that were verified against the manifest.
+    fn load_verified(&self, slot: &SlotId) -> Result<(Loaded, Vec<u8>)> {
+        let sav_exists = self.file(slot, SAV).exists();
+        let bak_exists = self.file(slot, SAV_BAK).exists();
+        if !sav_exists && !bak_exists && !self.file(slot, MANIFEST).exists() {
+            return Err(StoreError::NotFound(slot.to_string()));
+        }
+
+        let candidates = [
+            (SAV, MANIFEST, false),
+            (SAV_BAK, MANIFEST_BAK, true),
+            (SAV_BAK, MANIFEST, true),
+        ];
+        let mut problems = Vec::new();
+        for (sav_suffix, manifest_suffix, used_backup) in candidates {
+            match self.try_candidate(slot, sav_suffix, manifest_suffix) {
+                Ok((manifest, data, sav)) => {
+                    let loaded = Loaded {
+                        manifest,
+                        data,
+                        used_backup,
+                    };
+                    return Ok((loaded, sav));
+                }
+                // A newer format is not a damaged file. Falling back to an
+                // older backup would silently lose data, so stop here.
+                Err(err @ StoreError::NewerVersion { .. }) => return Err(err),
+                Err(err) => problems.push(format!("{sav_suffix}/{manifest_suffix}: {err}")),
+            }
+        }
+        Err(StoreError::Corrupt(problems.join("; ")))
+    }
+
+    /// Writes a copy of `slot` as `<slot>.bsave` (or `<slot>-2.bsave`, ...)
+    /// inside `folder`, which is created when missing. An existing file is
+    /// never overwritten. Returns the path written.
+    ///
+    /// The slot is loaded and checked first, so a damaged slot is not exported.
+    ///
+    /// # Errors
+    ///
+    /// Returns the load error for a missing or damaged slot, or an I/O error.
+    pub fn export_to(&self, slot: &SlotId, folder: &Path) -> Result<PathBuf> {
+        let (loaded, sav) = self.load_verified(slot)?;
+        let bytes = bundle::encode(slot.as_str(), &loaded.manifest, &sav)?;
+        fs::create_dir_all(folder)?;
+        let path = unique_path(folder, slot.as_str(), BUNDLE_EXTENSION)?;
+        let tmp = path.with_extension(format!("{BUNDLE_EXTENSION}.part"));
+        write_synced(&tmp, &bytes)?;
+        fs::rename(&tmp, &path)?;
+        Ok(path)
+    }
+
+    /// Imports a `.bsave` file as a new slot. See [`LocalStore::import_opened`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`OpenedBundle::read`] and [`LocalStore::import_opened`].
+    pub fn import_file(&self, path: &Path, as_name: Option<&str>) -> Result<SlotId> {
+        let opened = OpenedBundle::read(path)?;
+        self.import_opened(opened, as_name)
+    }
+
+    /// Stores an opened bundle as a new slot and returns its name.
+    ///
+    /// With `as_name`, that name is validated (refused when it breaks the
+    /// slot rules). Without it, the exported name is sanitised. In both cases
+    /// the slot is never an existing one: when the name is taken, in any letter
+    /// case, `-2`, `-3`, ... is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::BadSlotName`] for a bad `as_name`, and I/O or
+    /// SQLite errors from writing the slot.
+    pub fn import_opened(&self, opened: OpenedBundle, as_name: Option<&str>) -> Result<SlotId> {
+        let base = match as_name {
+            Some(name) => SlotId::new(name)?.as_str().to_string(),
+            None => opened.suggested_name.clone(),
+        };
+        let slot = self.unique_slot(&base)?;
+        self.save(&slot, opened.manifest, &opened.data)?;
+        Ok(slot)
+    }
+
+    /// The first free slot name based on `base`, compared without case.
+    fn unique_slot(&self, base: &str) -> Result<SlotId> {
+        let taken = self.taken_stems()?;
+        for n in 1..=MAX_NAME_TRIES {
+            let candidate = numbered(base, n);
+            if !taken.contains(&candidate.to_ascii_lowercase()) {
+                return SlotId::new(candidate);
+            }
+        }
+        Err(StoreError::InvalidInput(format!(
+            "no free slot name based on {base:?}"
+        )))
+    }
+
+    /// Lowercase names of every file in the save folder, cut at the first
+    /// dot. Slot names never contain a dot, so this is the slot name.
+    fn taken_stems(&self) -> Result<BTreeSet<String>> {
+        let mut out = BTreeSet::new();
+        for entry in fs::read_dir(&self.dir)? {
+            let name = entry?.file_name();
+            if let Some(name) = name.to_str() {
+                let stem = name.split('.').next().unwrap_or(name);
+                out.insert(stem.to_ascii_lowercase());
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// `base` for `n == 1`, otherwise `base-n`. `base` is cut so the result stays
+/// within the slot name limit.
+fn numbered(base: &str, n: u32) -> String {
+    if n == 1 {
+        return base.to_string();
+    }
+    let suffix = format!("-{n}");
+    let keep = MAX_SLOT_LEN.saturating_sub(suffix.len()).min(base.len());
+    let head = base.get(..keep).unwrap_or(base);
+    format!("{head}{suffix}")
+}
+
+/// First free `<base>.<ext>` (or `<base>-n.<ext>`) in `folder`.
+fn unique_path(folder: &Path, base: &str, ext: &str) -> Result<PathBuf> {
+    for n in 1..=MAX_NAME_TRIES {
+        let path = folder.join(format!("{}.{ext}", numbered(base, n)));
+        if !path.exists() {
+            return Ok(path);
+        }
+    }
+    Err(StoreError::InvalidInput(format!(
+        "no free file name based on {base:?} in {}",
+        folder.display()
+    )))
 }
 
 impl SaveStore for LocalStore {
@@ -374,34 +580,7 @@ impl SaveStore for LocalStore {
     }
 
     fn load(&self, slot: &SlotId) -> Result<Loaded> {
-        let sav_exists = self.file(slot, SAV).exists();
-        let bak_exists = self.file(slot, SAV_BAK).exists();
-        if !sav_exists && !bak_exists && !self.file(slot, MANIFEST).exists() {
-            return Err(StoreError::NotFound(slot.to_string()));
-        }
-
-        let candidates = [
-            (SAV, MANIFEST, false),
-            (SAV_BAK, MANIFEST_BAK, true),
-            (SAV_BAK, MANIFEST, true),
-        ];
-        let mut problems = Vec::new();
-        for (sav_suffix, manifest_suffix, used_backup) in candidates {
-            match self.try_candidate(slot, sav_suffix, manifest_suffix) {
-                Ok((manifest, data)) => {
-                    return Ok(Loaded {
-                        manifest,
-                        data,
-                        used_backup,
-                    });
-                }
-                // A newer format is not a damaged file. Falling back to an
-                // older backup would silently lose data, so stop here.
-                Err(err @ StoreError::NewerVersion { .. }) => return Err(err),
-                Err(err) => problems.push(format!("{sav_suffix}/{manifest_suffix}: {err}")),
-            }
-        }
-        Err(StoreError::Corrupt(problems.join("; ")))
+        self.load_verified(slot).map(|(loaded, _)| loaded)
     }
 
     fn delete(&self, slot: &SlotId) -> Result<()> {
@@ -463,15 +642,4 @@ fn remove_if_exists(path: &Path) -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err.into()),
     }
-}
-
-/// SHA-256 of `bytes` as lowercase hex.
-fn sha256_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest.iter() {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
 }

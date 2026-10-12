@@ -40,6 +40,9 @@ pub enum StoreError {
     /// The caller passed a value the format cannot store.
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    /// A `.bsave` file failed a check (marker, version, framing, checksum).
+    #[error("not a valid save bundle: {0}")]
+    Bundle(String),
 }
 
 /// Result alias used across the crate.

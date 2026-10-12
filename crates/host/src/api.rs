@@ -259,6 +259,18 @@ pub enum Request {
     DeleteSave {
         slot: String,
     },
+    /// Write one save as `<folder>/<slot>.bsave`. Never overwrites a file.
+    ExportSave {
+        slot: String,
+        folder: String,
+    },
+    /// Import a `.bsave` file as a new save. `as_name` is the slot name to
+    /// use; when it is absent the name from the file is used. A slot is never
+    /// overwritten: a taken name gets a numbered suffix.
+    ImportSave {
+        path: String,
+        as_name: Option<String>,
+    },
     Overview,
     Standings,
     /// A club's schedule and results this season.

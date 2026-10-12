@@ -37,6 +37,25 @@ folder named by the environment variable `BASEBALL_SIM_SAVES`. Each slot has
 a `.sav` file and a `.manifest.json` file. The game keeps a `.bak` copy of the
 last good save.
 
+## How to move a save
+
+Use the Saves screen to move a league to another computer.
+
+1. On the machine you are leaving, open Saves and click **Export** on the
+   slot. The save is written as `<slot>.bsave` in the export folder (Downloads
+   by default; you can type another folder). The file holds the whole league
+   and its checksum. Copy it to the other machine by any means.
+2. On the new machine, open Saves, type the path of the `.bsave` file under
+   **Import file**, and click **Import**. You can also type a slot name under
+   **as**. If you leave it empty, the save gets a free name from its file.
+3. Import never overwrites a slot. If the name is taken, the save gets a new
+   name such as `career-2`.
+
+The game refuses a file that is damaged, cut short, or not a save. It also
+refuses a save made with other calibration data, and says which data it
+needs. A save made by an older build of the game loads, and the game tells you
+that the rules may differ.
+
 ## Rename clubs and players
 
 All names are invented. You can rename clubs and players in a saved league

@@ -1,4 +1,5 @@
-//! Saved games: load, delete, and (during a game) save and quick-save.
+//! Saved games: load, delete, export to a file, import from a file, and (during
+//! a game) save and quick-save.
 
 use host::api::{Request, SaveInfo};
 
@@ -6,10 +7,27 @@ use crate::app::{App, Tag};
 
 const RED: egui::Color32 = egui::Color32::from_rgb(220, 90, 90);
 
+/// Where exported saves go by default: Downloads, else Desktop, else home.
+#[must_use]
+pub fn default_export_folder() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() {
+        return String::new();
+    }
+    ["Downloads", "Desktop"]
+        .iter()
+        .map(|d| format!("{home}/{d}"))
+        .find(|p| std::path::Path::new(p).is_dir())
+        .unwrap_or(home)
+}
+
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.heading("Saves");
     ui.add_space(6.0);
     let busy = app.busy();
+
+    transfer_controls(app, ui, busy);
+    ui.add_space(8.0);
 
     if app.started {
         save_controls(app, ui, busy);
@@ -25,6 +43,41 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     table(app, ui, &saves, busy);
+}
+
+/// Export folder and import controls. They show with or without a game.
+fn transfer_controls(app: &mut App, ui: &mut egui::Ui, busy: bool) {
+    ui.horizontal(|ui| {
+        ui.label("Export folder");
+        ui.add(
+            egui::TextEdit::singleline(&mut app.state.export_folder)
+                .desired_width(320.0)
+                .hint_text("folder path"),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("Import file");
+        ui.add(
+            egui::TextEdit::singleline(&mut app.state.import_path)
+                .desired_width(320.0)
+                .hint_text("path to a .bsave file"),
+        );
+        ui.label("as");
+        ui.add(
+            egui::TextEdit::singleline(&mut app.state.import_as)
+                .desired_width(140.0)
+                .hint_text("slot name (optional)"),
+        );
+        let path = app.state.import_path.trim().to_string();
+        if ui
+            .add_enabled(!busy && !path.is_empty(), egui::Button::new("Import"))
+            .clicked()
+        {
+            let as_name = Some(app.state.import_as.trim().to_string()).filter(|s| !s.is_empty());
+            app.ask(Request::ImportSave { path, as_name }, Tag::Change);
+            app.ask(Request::ListSaves, Tag::Saves);
+        }
+    });
 }
 
 fn save_controls(app: &mut App, ui: &mut egui::Ui, busy: bool) {
@@ -58,11 +111,12 @@ fn table(app: &mut App, ui: &mut egui::Ui, saves: &[SaveInfo], busy: bool) {
     let armed: Option<String> = ctx.data(|d| d.get_temp(armed_id));
     let mut load = None;
     let mut delete = None;
+    let mut export = None;
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         egui::Grid::new("saves_grid")
             .striped(true)
-            .num_columns(10)
+            .num_columns(11)
             .spacing([14.0, 4.0])
             .show(ui, |ui| {
                 for h in [
@@ -77,6 +131,7 @@ fn table(app: &mut App, ui: &mut egui::Ui, saves: &[SaveInfo], busy: bool) {
                 ] {
                     ui.strong(h);
                 }
+                ui.label("");
                 ui.label("");
                 ui.label("");
                 ui.end_row();
@@ -111,6 +166,10 @@ fn table(app: &mut App, ui: &mut egui::Ui, saves: &[SaveInfo], busy: bool) {
                     if ui.add_enabled(!busy, egui::Button::new(label)).clicked() {
                         delete = Some((s.slot.clone(), confirming));
                     }
+
+                    if ui.add_enabled(!busy, egui::Button::new("Export")).clicked() {
+                        export = Some(s.slot.clone());
+                    }
                     ui.end_row();
                 }
             });
@@ -131,5 +190,10 @@ fn table(app: &mut App, ui: &mut egui::Ui, saves: &[SaveInfo], busy: bool) {
         } else {
             ctx.data_mut(|d| d.insert_temp(armed_id, slot));
         }
+    }
+    if let Some(slot) = export {
+        // The answer names the file written, or says why it was not.
+        let folder = app.state.export_folder.trim().to_string();
+        app.ask(Request::ExportSave { slot, folder }, Tag::Change);
     }
 }

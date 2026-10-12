@@ -287,6 +287,12 @@ impl Host {
             Request::QuickSave => self.save("quick", SaveKind::Quick),
             Request::Load { slot } => self.load(&slot),
             Request::ListSaves => self.list_saves(),
+            Request::ExportSave { slot, folder } => {
+                export_save(self.store.as_ref(), &slot, &folder)
+            }
+            Request::ImportSave { path, as_name } => {
+                import_save(self.store.as_ref(), &path, as_name.as_deref())
+            }
             Request::DeleteSave { slot } => {
                 let Some(store) = &self.store else {
                     return Response::Failed("no save folder".into());
@@ -832,7 +838,7 @@ impl Host {
             "roles".into(),
             serde_json::to_string(&self.roles).map_err(|e| e.to_string())?,
         );
-        data.meta.insert("data".into(), "params-1".into());
+        data.meta.insert("data".into(), DATA_TAG.into());
         data.meta
             .insert("calibration".into(), calibration_id(&self.cal));
         data.meta.insert("engine".into(), ENGINE_VERSION.into());
@@ -901,19 +907,10 @@ impl Host {
             .map_err(|e| e.to_string())?;
         let snap: world::state::Snapshot =
             serde_json::from_slice(&loaded.data.snapshot).map_err(|e| e.to_string())?;
-        let meta = &loaded.data.meta;
-        let club: u8 = meta
-            .get("club")
-            .and_then(|c| c.parse().ok())
-            .ok_or("the save has no club")?;
-        let difficulty: Difficulty = meta
-            .get("difficulty")
-            .and_then(|d| serde_json::from_str(d).ok())
-            .ok_or("the save has no difficulty")?;
         // A league built on other calibration data would play differently
         // from the one that was saved, so refuse it. Saves from before the
         // key existed carry no id and are not refused.
-        if let Some(saved) = meta.get("calibration") {
+        if let Some(saved) = loaded.data.meta.get("calibration") {
             let here = calibration_id(cal);
             if *saved != here {
                 return Err(format!(
@@ -921,18 +918,13 @@ impl Host {
                 ));
             }
         }
-        let smart = meta.get("smart_tactics").is_some_and(|s| s == "true");
-        // Saves from before roles existed were general manager games.
-        let roles: Roles = match meta.get("roles") {
-            Some(r) => serde_json::from_str(r).map_err(|_| "the save has bad roles")?,
-            None => Roles::default(),
-        };
-        if usize::from(club) >= TEAMS {
-            return Err("the save names an unknown club".into());
-        }
-        if !roles.any() {
-            return Err("the save names no role for the person".into());
-        }
+        let meta = parse_meta(&loaded.data.meta)?;
+        let Meta {
+            club,
+            difficulty,
+            smart,
+            roles,
+        } = meta;
         let seed = snap.seed;
         let model = Model::from_calibration(cal);
         let world = World::restore(cal.params, model, snap).map_err(|e| e.to_string())?;
@@ -945,7 +937,12 @@ impl Host {
             },
         });
         let mut notices = vec!["Game loaded.".to_string()];
-        if let Some(engine) = meta.get("engine").filter(|e| e.as_str() != ENGINE_VERSION) {
+        if let Some(engine) = loaded
+            .data
+            .meta
+            .get("engine")
+            .filter(|e| e.as_str() != ENGINE_VERSION)
+        {
             notices.push(format!(
                 "The save was made by {engine}; this is {ENGINE_VERSION}. Results may differ."
             ));
@@ -1006,6 +1003,106 @@ pub(crate) fn saves_of(store: &LocalStore) -> Response {
                 .collect(),
         ),
         Err(e) => Response::Failed(e.to_string()),
+    }
+}
+
+/// The calibration data tag this build writes and accepts.
+const DATA_TAG: &str = "params-1";
+
+/// The settings a save must carry to be played.
+struct Meta {
+    club: u8,
+    difficulty: Difficulty,
+    smart: bool,
+    roles: Roles,
+}
+
+/// Checks the metadata of a save. Used before a save is loaded and before
+/// one is imported, so a bad file is refused before it reaches the folder.
+fn parse_meta(meta: &std::collections::BTreeMap<String, String>) -> Result<Meta, String> {
+    if let Some(data) = meta.get("data")
+        && data != DATA_TAG
+    {
+        return Err(format!(
+            "this save was made with calibration data \"{data}\", but this build uses \"{DATA_TAG}\", so it cannot be loaded here"
+        ));
+    }
+    let club: u8 = meta
+        .get("club")
+        .and_then(|c| c.parse().ok())
+        .ok_or("the save has no club")?;
+    let difficulty: Difficulty = meta
+        .get("difficulty")
+        .and_then(|d| serde_json::from_str(d).ok())
+        .ok_or("the save has no difficulty")?;
+    let smart = meta.get("smart_tactics").is_some_and(|s| s == "true");
+    // Saves from before roles existed were general manager games.
+    let roles: Roles = match meta.get("roles") {
+        Some(r) => serde_json::from_str(r).map_err(|_| "the save has bad roles")?,
+        None => Roles::default(),
+    };
+    if usize::from(club) >= TEAMS {
+        return Err("the save names an unknown club".into());
+    }
+    if !roles.any() {
+        return Err("the save names no role for the person".into());
+    }
+    Ok(Meta {
+        club,
+        difficulty,
+        smart,
+        roles,
+    })
+}
+
+/// Writes one save as `<folder>/<slot>.bsave`. Never overwrites a file.
+pub(crate) fn export_save(store: Option<&LocalStore>, slot: &str, folder: &str) -> Response {
+    let Some(store) = store else {
+        return Response::Failed("no save folder".into());
+    };
+    let result = SlotId::new(slot).map_err(|e| e.to_string()).and_then(|id| {
+        store
+            .export_to(&id, std::path::Path::new(folder))
+            .map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(path) => Response::Done(format!("Exported to {}", path.display())),
+        Err(e) => Response::Failed(e),
+    }
+}
+
+/// Imports a `.bsave` file as a new save. Everything is checked before the
+/// save folder is touched: the file, the calibration tag, the settings and
+/// the league snapshot. The slot is never overwritten.
+pub(crate) fn import_save(
+    store: Option<&LocalStore>,
+    path: &str,
+    as_name: Option<&str>,
+) -> Response {
+    let Some(store) = store else {
+        return Response::Failed("no save folder".into());
+    };
+    let result = (|| -> Result<String, String> {
+        let opened =
+            storage::OpenedBundle::read(std::path::Path::new(path)).map_err(|e| e.to_string())?;
+        parse_meta(&opened.data.meta)?;
+        serde_json::from_slice::<world::state::Snapshot>(&opened.data.snapshot)
+            .map_err(|e| format!("the file does not hold a league: {e}"))?;
+        let mut notice = String::new();
+        if opened.manifest.engine_version != ENGINE_VERSION {
+            notice = format!(
+                " Note: it was saved by \"{}\"; this build is \"{ENGINE_VERSION}\", so the rules may differ.",
+                opened.manifest.engine_version
+            );
+        }
+        let id = store
+            .import_opened(opened, as_name)
+            .map_err(|e| e.to_string())?;
+        Ok(format!("Imported as {id}.{notice}"))
+    })();
+    match result {
+        Ok(message) => Response::Done(message),
+        Err(e) => Response::Failed(e),
     }
 }
 
