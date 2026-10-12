@@ -87,17 +87,32 @@ fn the_ai_general_manager_plays_legal_deterministic_years() {
     assert!(rebuilt == a);
 }
 
+/// Every difficulty trades (owner decision): difficulty changes how well a
+/// general manager judges a deal, not whether it makes one.
 #[test]
-fn rookies_do_not_trade_and_veterans_only_answer() {
-    for (preset, proposes) in [(Preset::Rookie, false), (Preset::Veteran, false)] {
-        let (_, log, _) = run(22, 2, |t| {
-            Box::new(SurplusGm::new(
-                u64::from(t),
-                preset.profile(Personality::BALANCED),
-            ))
-        });
-        let proposed = log.iter().any(|e| matches!(e, Event::TradeProposed { .. }));
-        assert_eq!(proposed, proposes, "{preset:?}");
+fn every_preset_proposes_trades() {
+    for preset in Preset::ALL {
+        let profile = preset.profile(Personality::BALANCED);
+        assert_eq!(profile.trades, gm::TradeMode::Active, "{preset:?}");
+        let (_, log, _) = run(22, 2, |t| Box::new(SurplusGm::new(u64::from(t), profile)));
+        let proposed = log
+            .iter()
+            .filter(|e| matches!(e, Event::TradeProposed { .. }))
+            .count();
+        println!("{preset:?}: proposed {proposed}");
+        assert!(proposed > 0, "{preset:?} proposed no trade");
+    }
+}
+
+#[test]
+fn easier_presets_judge_trades_more_loosely() {
+    let ps: Vec<_> = Preset::ALL
+        .iter()
+        .map(|p| p.profile(Personality::BALANCED))
+        .collect();
+    for pair in ps.windows(2) {
+        assert!(pair[1].offer_buffer() <= pair[0].offer_buffer());
+        assert!(pair[1].accept_slack() <= pair[0].accept_slack());
     }
 }
 

@@ -69,6 +69,25 @@ pub struct Profile {
     pub personality: Personality,
 }
 
+impl Profile {
+    /// Millions of apparent gain, beyond the margin it assumes the other club
+    /// wants, that this general manager leaves on the table when it makes an
+    /// offer. A sharp one asks for nearly all of a deal's value; a poorly
+    /// informed one overpays to be sure of a yes.
+    #[must_use]
+    pub fn offer_buffer(&self) -> f64 {
+        0.5 + 4.0 * self.extra_noise.clamp(0.0, 1.0)
+    }
+
+    /// Millions of apparent loss this general manager fails to notice when it
+    /// answers an offer: the less it knows, the more lopsided the deals it
+    /// accepts.
+    #[must_use]
+    pub fn accept_slack(&self) -> f64 {
+        1.5 * self.extra_noise.clamp(0.0, 1.0)
+    }
+}
+
 /// Difficulty presets: from a general manager who trusts noisy reports and
 /// looks one year ahead, to one who pools every view, projects ageing and
 /// trades. The dice are the same for all.
@@ -92,7 +111,7 @@ impl Preset {
                 horizon: 1,
                 projects_aging: false,
                 picks_years: false,
-                trades: TradeMode::Off,
+                trades: TradeMode::Active,
                 spends_budget: false,
                 personality,
             },
@@ -102,7 +121,7 @@ impl Preset {
                 horizon: 2,
                 projects_aging: false,
                 picks_years: false,
-                trades: TradeMode::Respond,
+                trades: TradeMode::Active,
                 spends_budget: true,
                 personality,
             },
