@@ -195,6 +195,10 @@ impl GmAction {
                 years,
             },
             Command::ReleasePlayer { player, .. } => Self::Release { player },
+            Command::ProposeTrade {
+                partner, give, get, ..
+            } => Self::ProposeTrade { partner, give, get },
+            Command::RespondTrade { offer, accept, .. } => Self::RespondTrade { offer, accept },
             Command::SetLevel { player, level, .. } => Self::SetLevel { player, level },
             _ => return None,
         })

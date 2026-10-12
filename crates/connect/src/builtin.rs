@@ -1,6 +1,6 @@
 use world::agents::{
     LeagueObs, OwnerObs, commissioner_rules_for, draft_pick, free_agency_step, owner_budget_for,
-    owner_build_for, owner_stance_for, owner_ticket_for, set_levels,
+    owner_build_for, owner_stance_for, owner_ticket_for, set_levels, trade_moves,
 };
 use world::state::{Phase, Rules, Tactics};
 
@@ -62,12 +62,17 @@ impl OwnerAgent for BuiltInOwner {
 pub struct BuiltInGm;
 
 impl GmAgent for BuiltInGm {
+    /// It answers offers, and a club in debt sheds salary by trade.
+    fn trades(&self) -> bool {
+        true
+    }
+
     fn act(&mut self, turn: &GmTurn) -> Vec<GmAction> {
         let commands = match turn.stage {
             GmStage::Draft => draft_pick(&turn.obs).into_iter().collect(),
             GmStage::FreeAgency => free_agency_step(&turn.obs).into_iter().collect(),
             GmStage::Roster => set_levels(&turn.obs),
-            GmStage::Trade => Vec::new(),
+            GmStage::Trade => trade_moves(&turn.obs),
         };
         commands.iter().filter_map(GmAction::from_command).collect()
     }

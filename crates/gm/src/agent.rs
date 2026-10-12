@@ -2,7 +2,7 @@ use connect::{GmAction, GmAgent, GmStage, GmTurn};
 use world::agents::{GmObs, Held, Seen, set_levels};
 use world::player::{Level, Origin};
 use world::rating::Kind;
-use world::state::{CREDIT, MAJORS_PER_KIND, MIN_SALARY, ROSTER_MAX_PER_KIND, Stance};
+use world::state::{CREDIT, MAJORS_PER_KIND, ROSTER_MAX_PER_KIND, Stance};
 
 use crate::profile::{Profile, TradeMode};
 use crate::value::{Context, Est};
@@ -59,6 +59,7 @@ impl SurplusGm {
             if (s.origin == Origin::International) != d.international
                 || s.demand > d.ceiling
                 || obs.cash - s.demand < -CREDIT
+                || obs.in_debt()
             {
                 continue;
             }
@@ -77,10 +78,6 @@ impl SurplusGm {
     fn free_agency(&self, obs: &GmObs) -> Vec<GmAction> {
         let ctx = Context::new(obs, self.seed);
         let p = &self.profile;
-        let room = |ask: f64| {
-            ask <= MIN_SALARY + 1e-9
-                || (obs.payroll + ask <= obs.budget + 1e-9 && obs.payroll + ask <= obs.payroll_cap)
-        };
         let mut best: Option<(f64, Est, u8)> = None;
         let mut fallback: Option<(f64, Est, u8)> = None;
         for kind in [Kind::Batter, Kind::Pitcher] {
@@ -107,7 +104,7 @@ impl SurplusGm {
                 }
                 let years = ctx.best_years(&e, p);
                 let price = f.ask;
-                if !room(price) {
+                if !obs.may_sign(kind, price) {
                     continue;
                 }
                 let surplus = ctx.surplus(&e, price, years, p);
@@ -161,7 +158,11 @@ impl SurplusGm {
         let ctx = Context::new(obs, self.seed);
         let value = |s: &Seen| ctx.contract_surplus(&ctx.estimate(s, p), p);
         let margin = p.personality.trade_margin;
-        let mut out = Vec::new();
+        // A club in debt sheds salary first.
+        let mut out: Vec<GmAction> = world::agents::salary_dumps(obs)
+            .into_iter()
+            .filter_map(|c| GmAction::from_command(&c))
+            .collect();
         let held = |kind: Kind| obs.roster.iter().filter(|s| s.kind == kind).count();
         for o in &t.incoming {
             let gain: f64 =
