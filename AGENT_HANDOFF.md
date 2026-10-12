@@ -7,10 +7,10 @@ An open-source (Apache-2.0), OOTP-style baseball management sim in Rust, fiction
 
 ## 2. Where we are
 
-**2026-10-13 documentation update:** original code remains at `af61282`; no candidate implementation was applied. Read `ISSUES.md` section 6 before continuing. It records the independent review, completed attempts, verified candidate results, performance regression, exact local commit/bundle locations and owner decisions. Candidate results are not current-main results; the candidate is held. This is a documentation-only update.
+**2026-10-13 documentation update:** original code remains at `e232181`; no candidate implementation was applied. Read `ISSUES.md` section 6 before continuing. It records the independent review, completed attempts, verified candidate results, performance regression, exact local commit/bundle locations and owner decisions. Candidate results are not current-main results; the candidate is held. This is a documentation-only update.
 
 - Phases 0-7 built; `v0.1` tagged; Phase 7b (base-game completeness) in progress; Phase 8 (online) not started.
-- `main` is pushed and tested at unit level (`cargo test --workspace` on 2026-10-12: 212 passed, 0 failed, 23 ignored long gates). CI was not checked after the last pushes (last known green: `ci.yml` on 8e4d820, `release.yml` on db428f5 and the `v0.1` tag); check it first (`gh run list`), per job on ubuntu, macos, windows.
+- `main` is pushed and tested at unit level (`cargo test --workspace` on 2026-10-12: 212 passed, 0 failed, 23 ignored long gates). CI was not checked after the last pushes (last known green: `ci.yml` on 3fb8072, `release.yml` on 2487a46 and the `v0.1` tag); check it first (`gh run list`), per job on ubuntu, macos, windows.
 - Main's historical long-gate coverage remains incomplete. The follow-up ran the full required set on a separate candidate with dedicated build outputs; it did not establish an overall pass. Reuse those recorded results when the source is unchanged. Re-run appropriate gates after new changes or to answer a specific unresolved baseline question; do not confuse the candidate with main.
 
 ## 3. The two failing gates

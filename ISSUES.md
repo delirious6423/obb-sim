@@ -23,7 +23,7 @@ Sections 1-5 are the historical handoff. Section 6 records the independent revie
 
 **Real anchors.** Free agents cost about $9-10M per WAR (FanGraphs series: 9.0M in 2014-16; informal 10.2M in 2023 and 8.9M in 2024). Payroll explains about 16-20% of the variation in wins in a typical year (r about 0.4), and almost none in 2023. So in real baseball outspending does buy wins, but at about twice our price.
 
-**Plan on the table.** Reprice free agents to real $/WAR and rebalance revenue and costs. Branch `worktree-agent-a4ba1b1810eb11ab0`, commit f155ad9, plus a WIP commit 39057f9 (inflation, unfinished). Never tested against the gate.
+**Plan on the table.** Reprice free agents to real $/WAR and rebalance revenue and costs. Branch `worktree-agent-a4ba1b1810eb11ab0`, commit 710e0b0, plus a WIP commit b07653c (inflation, unfinished). Never tested against the gate.
 
 **Questions for the owner**
 - Is the test right? It treats any lasting win edge as an exploit. In real baseball a team that pays more wins more, and that is not an exploit. The alternative is a net-value test: a bot is an exploit only if it gains wins without paying for them. That is a definition change and needs the owner's yes.
@@ -80,16 +80,17 @@ Sections 1-5 are the historical handoff. Section 6 records the independent revie
 - Test edits since the last push that the owner has NOT individually approved (all follow from removing the credit line): world.rs release filter `owed < cash + CREDIT` -> `owed <= cash`; economy.rs ballpark test cash `-CREDIT + 1` -> `4.0`; crates/gm/tests/agent.rs and storage/tests/local_store.rs changed (the first replaced rookies_do_not_trade_and_veterans_only_answer with every_preset_proposes_trades). Approved: roles-gate debt criterion, deleted rescue test, credit-line test rename, trade-gate assertion on wins.
 - `World::restore` does not check budget against the lender limit (closing-time clamp covers it).
 
-## 6. Independent review and bounded experiments (2026-10-12–13, base af61282)
+## 6. Independent review and bounded experiments (2026-10-12–13, base e232181)
 
 ### Status and location of the unmerged work
 
-**Documented in the original repository on 2026-10-13; no candidate code has been applied here.** The reviewed original code remains at `af61282c05997de4dd892cfaa75686578468714c`, with WAR price 4.4 and rules version 2. All candidate results below refer to a separate local checkout, not to current main. The candidate passes the hoarder gate but still fails draft calibration and has a repeatable 11.88% offseason slowdown. **Hold the combined candidate; it is not ready to merge.**
+**Documented in the original repository on 2026-10-13; no candidate code has been applied here.** The reviewed original code remains at `e232181c80671ceb808eda07c56222f91eb567b4`, with WAR price 4.4 and rules version 2. All candidate results below refer to a separate local checkout, not to current main. The candidate passes the hoarder gate but still fails draft calibration and has a repeatable 11.88% offseason slowdown. **Hold the combined candidate; it is not ready to merge.**
 
+- **History rewrite (2026-10-13):** every commit was re-authored to the owner's GitHub identity before the repository went public; file trees are unchanged, hashes are not. Hashes in this file are the new ones. The local Codex candidate below and its bundle were built on the pre-rewrite hash `af61282` of `e232181`; move them with `git rebase --onto e232181 af61282 <branch>`.
 - Candidate branch: `codex/review-calibration-gates`, tip `a6e16650a764ad114fa13407dcc727e2309f5cbf`.
 - Local checkout: a separate clone on the owner's machine (not pushed).
 - Separate commits: `b98ccb3` shared roster-release cash plus regression and rules 3; `a983bf9` price/configuration experiment; `a6e1665` review and verification documentation. The release-only commit has not had its own full gate run; final verification covers the combined candidate.
-- Report, verified patch/bundle, and logs: kept with that local clone (not in this repository). The report is `final-report.txt`; `baseball-sim-candidate.bundle` requires base `af61282`; `baseball-sim-review-package.zip` includes the evidence. Candidate code and these commits were not pushed; remote CI was not verified because network access was unavailable.
+- Report, verified patch/bundle, and logs: kept with that local clone (not in this repository). The report is `final-report.txt`; `baseball-sim-candidate.bundle` requires base `e232181`; `baseball-sim-review-package.zip` includes the evidence. Candidate code and these commits were not pushed; remote CI was not verified because network access was unavailable.
 - Neither draft experiment nor the large economy/inflation or usage branch was merged. Do not repeat the completed attempts below without a new, explicit hypothesis and owner decision.
 
 ### Review corrections and unresolved defects
