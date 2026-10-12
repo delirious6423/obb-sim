@@ -27,13 +27,18 @@ Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` a
 | `protocol` | Commands, events, actors, command log, snapshot type, roles, ids |
 | `league` | League state; permissions; `execute(actor, command) -> events`; `apply(event)` |
 | `ai` | Role traits, role views, `vet` (early batch check) |
-| `storage` | Persistence (not started) |
-| `cli` | Binary front end |
+| `storage` | Save files: local multi-slot store (SQLite), manifests, checksums, `.bsave` bundles; knows nothing about the game |
+| `cli` | Binary `sim`: season, box score and player viewers, `bench`, roster rename tool |
 | `calibration` | Calibration of the engine against league-wide rates; generated rosters; file I/O lives here, outside `sim-core` |
 | `season` | Full season: schedule, games, standings, playoffs; pure like `sim-core` |
 | `world` | The living league: players over time, minor leagues, draft, free agency, club finances |
 | `tactics` | Field-manager intelligence: run-expectancy and win-probability tables and a manager that uses them |
-| `connect` | Agent connectors: typed observations and actions for each of the four roles; JSON for external seats |
+| `connect` | Agent connectors: typed observations and actions for each of the four roles; built-in seats; JSON for external seats |
+| `gm` | General-manager AI: surplus-value model, personalities, difficulty presets, trade packages, exploit bots and the reference GM for the ladder |
+| `host` | The protocol (`host::api`), the in-process league host and threaded client; the UI and any future server talk to the league only through it |
+| `ui` | Desktop front end (egui), binary `game`; `game --self-test` is the headless smoke test |
+
+The members list in the root `Cargo.toml` is the source of truth; keep this table in step with it.
 
 ## Notes
 
@@ -43,7 +48,7 @@ Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` a
 
 ## Working method
 
-`PLAN.md` is the project's memory and the source of truth for what to do next. After a context reset, read it and this file, then continue at the first unticked item. Log every new dependency or data source in `THIRD_PARTY.md`. Calibration data lives in git-ignored `data/internal/` and holds no real player id, name or stat line.
+`AGENT_HANDOFF.md` is the entry point for a new session; it orders the other documents. `PLAN.md` is the project's memory and the source of truth for what to do next (its HANDOFF section first, then the first unticked item); `ISSUES.md` holds the failing gates in detail. Each fact lives in one place: put a pointer, not a copy, in the other files. Log every new dependency or data source in `THIRD_PARTY.md`. Calibration data lives in git-ignored `data/internal/` and holds no real player id, name or stat line.
 
 ## Claude Code tools
 

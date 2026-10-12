@@ -1,6 +1,6 @@
 # PLAN.md
 
-This file is memory. After a context reset: read this file and `CLAUDE.md`, then continue at the first unticked item.
+This file is memory. A new session starts at `AGENT_HANDOFF.md`, which orders the documents; then read the HANDOFF section below and continue at the first unticked item. Facts live in one place: the failing gates in `ISSUES.md`, the feature gaps in `OOTP_BENCHMARK.md`, the rules in `CLAUDE.md` and `AGENTS.md`. Sections marked SUPERSEDED are kept as history; do not act on them.
 
 ## How to run
 
@@ -16,7 +16,7 @@ This file is memory. After a context reset: read this file and `CLAUDE.md`, then
 - a choice is hard to reverse and could reasonably go either way (UI toolkit, a data format that saves depend on, a public API);
 - an earlier phase's design would have to change in a way that breaks its tests.
 
-Otherwise decide, note it in the log, keep going. **Stop after phase 4b and summarize.** Phases 5+ (desktop UI, saves, alpha, owner and commissioner roles, online) need user decisions first.
+Otherwise decide, note it in the log, keep going. ~~**Stop after phase 4b and summarize.** Phases 5+ (desktop UI, saves, alpha, owner and commissioner roles, online) need user decisions first.~~ (SUPERSEDED 2026-10-11: the owner handed over the full roadmap; Phases 5-7 are built. The current stop rule is in HANDOFF: no Phase 8 work until Phase 7b is done.)
 
 ## HANDOFF (written 2026-10-12; read this first on a new day or machine)
 
@@ -42,18 +42,19 @@ Otherwise decide, note it in the log, keep going. **Stop after phase 4b and summ
 
 **Branches (all private; pushed so another machine can continue)**
 - `main`: merged and tested at unit level (fmt, clippy, workspace tests green at 47c6f73 per test-runner; long gates NOT re-run on the combined state yet). Includes: known-gaps fixes; trading overhaul (`crates/gm/src/trade.rs`: packages up to 3-for-3, salary dumps, contender/rebuilder logic; 49-59 accepted trades/season, real MLB about 54); draft/stability calibration (rest days, 4-man bench, pool spread 1.0, founding era, roster-cut fix); debt rule; `.bsave` export/import (Saves screen; README/GUIDE explain); AGENTS.md/docs.
-- `worktree-agent-a4ba1b1810eb11ab0` (STOPPED, unverified): economy batch 1: commit f155ad9 'free agents at real $/WAR; revenue and costs rebalanced to MLB' plus uncommitted inflation work (check the worktree `.claude/worktrees/agent-a4ba1b1810eb11ab0` or the pushed branch).
-- `worktree-agent-a48d2592c901712db` (STOPPED, unverified): usage/fatigue/talent pipeline: commits d472b46, 431a90a, c60342b, 12a6edf, 5196ce4 (era pitch limits, playing-time customs, weekly rosters, short IL stints, deeper talent pipeline, agent control of playing-time setup, role preset, MLB usage dev aids). Draft-gate numbers were never reported.
-- Older worker branches `worktree-agent-*` (a0b8cf.., a0eb0a.., a26dc3.., a27d36.., a4a1b5.., a9aaf6.., ac0a0d.., ac66a7.., af3183..) are already merged or superseded; safe to delete after checking `git branch --merged main`.
+- `worktree-agent-a4ba1b1810eb11ab0` (STOPPED, unverified; on origin): economy batch 1: commit f155ad9 'free agents at real $/WAR; revenue and costs rebalanced to MLB' plus a WIP commit 39057f9 (inflation commands and tests, unfinished). Do not merge without the gate runs in `ISSUES.md` section 1.
+- `worktree-agent-a48d2592c901712db` (STOPPED, unverified; on origin): usage/fatigue/talent pipeline: commits d472b46, 431a90a, c60342b, 12a6edf, 5196ce4 (era pitch limits, playing-time customs, weekly rosters, short IL stints, deeper talent pipeline, agent control of playing-time setup, role preset, MLB usage dev aids). Never gated. See `ISSUES.md` section 2.
+- `worktree-agent-a0eb0a354888cdb4a` (on origin): one commit, a6ae8b5, the draft dev aid, already in `main` as 40f862b. Superseded; safe to delete.
+- All other worker branches were deleted from origin after their merges (checked 2026-10-12 with `git branch -r`).
 
-**Open issues (consistently failing; discuss with the owner before more attempts)**
-1. **Hoarder gate** `cargo test --release -p gm --test ladder exploit_bots_gain_no_lasting_edge -- --ignored --nocapture`: the hoarder bot (signs best free agent at any price up to budget) gains +0.037 win% (z 9.9) in seasons 26-50; limit is z < 2 and edge <= 0.015. FAILED 5 attempts: debt-wipe removal (ladder passes but roles gate failed), cash-to-credit-line, ticket-price pinning (worse), receivership, debt freeze (worse). Findings: debt was never the cause; the hoarder fully spends a budget the reference GM leaves ~23M short, and its extra wins earn back most of the cost. Real anchors: free agents cost about $9-10M/WAR (FanGraphs), payroll-win correlation about 0.4 in a typical year (weak in 2023); the sim's effective price is about $4.6M/win = about half. Plan was repricing (branch a4ba1b.. commit f155ad9). Open question for the owner: is 'exploit' = any lasting win edge, or an edge at net loss? (Do NOT change the definition without the owner.)
-2. **Draft gate** `cargo test --release -p world --test world_gate draft_gate -- --ignored --nocapture`: after rest days/bench/pool spread 1.0/founding era, picks 1-10 mean career WAR 13.4-14.5 (band 9.5-12.8), bust .67-.69 (band .60-.65), picks 31-90 reach .55-.57 (band .40-.51) and WAR 3.5-3.8 (band .8-3.3); 11-30 and 91-300 mostly pass. FAILED 6 attempts. Diagnosis: sourced studies observed classes 5-15 years after the draft (censored), the gate scores complete careers (in the study window picks 1-10 are 9.6-11.0 WAR); structurally the sim had no talent past pick 300 and clubs use ~28 players/year vs ~47 in MLB (top-300 draftees earn ~65% of league WAR vs ~48%). Partly addressed in branch a48d25.. Owner decision needed: (a) score in the study window, (b) build the pipeline/usage fixes, (c) both (recommended).
-3. Worker process: attempts failed partly because workers started cold; give full history. Consider shorter supervised steps.
+**Open issues (consistently failing; discuss with the owner before more attempts).** The attempt logs, numbers, anchors and owner questions are in `ISSUES.md` (one source of truth; do not copy them here).
+1. **Hoarder gate** (`exploit_bots_gain_no_lasting_edge`, ladder): the hoarder bot beats the reference by +0.026..+0.038 win% (limit z < 2 and <= 0.015); 7 measured attempts failed; debt was shown not to be the cause. `ISSUES.md` section 1.
+2. **Draft gate** (`draft_gate`): picks 1-10 WAR and bust, and picks 31-90 reach and WAR, sit above their bands; 9 attempts; the sourced studies are right-censored and the gate scores complete careers. `ISSUES.md` section 2.
+3. Worker process: attempts failed partly because workers started cold; give full history. `ISSUES.md` section 3.
 
-**Other known gaps and stale text** (some older text below still mentions a credit line (CREDIT 25M) and rescues; both are gone: debt rule above supersedes). Known gaps list at the bottom stays valid unless ticked. The roles/owner/commissioner screens, save export/import and the trade UI have not been played by a person.
+**Other known gaps.** Older sections and log entries below mention a credit line (`CREDIT`, 25M), rescues and receivership; all three were removed by the debt rule (Phase 7b) and such text is marked SUPERSEDED where it is not a log entry. The Known gaps list at the bottom stays valid unless marked fixed. The roles/owner/commissioner screens, save export/import and the trade UI have not been played by a person.
 
-**Gate commands** (release, ignored; need data/internal/params.json): roles `cargo test --release -p connect --test roles_gate -- --ignored --nocapture`; manager `-p world --test manager_gate`; stability `-p world --test world_gate stability_gate`; draft `-p world --test world_gate draft_gate`; ladder `-p gm --test ladder -- --ignored` (ai_beats_reference, presets_rank_in_order, exploit_bots_gain_no_lasting_edge); trade `-p gm --test trade_gate`; calibration gate in `calibration` crate. Last known results: roles PASS, manager PASS (+0.0078 z 5.2), stability PASS, trade PASS, ladder ranking PASS, hoarder FAIL, draft FAIL.
+**Gate commands** (release, ignored; need data/internal/params.json): roles `cargo test --release -p connect --test roles_gate -- --ignored --nocapture`; manager `-p world --test manager_gate`; stability `-p world --test world_gate stability_gate`; draft `-p world --test world_gate draft_gate`; ladder `-p gm --test ladder -- --ignored` (ai_beats_reference, presets_rank_in_order, exploit_bots_gain_no_lasting_edge); trade `-p gm --test trade_gate`; season `-p season -- --ignored season_gate`; calibration `cargo test --release -- --ignored calibration`. Dev aids (ignored, print only, for diagnosing a gate): `-p world --test draft_dev`, `--test draft_window_dev`, `--test league_dev`; `-p gm --test trade_volume`, `--test ladder mechanism`; `-p connect --test debt_report`. Last known results (per worker, not all on one commit): roles PASS, manager PASS (+0.0078 z 5.2), stability PASS, trade PASS, ladder ranking PASS, hoarder FAIL, draft FAIL.
 
 **Next steps after the discussion:** decide issues 1 and 2; merge or discard the two stopped branches (re-verify every gate); finish Phase 7b batches 1-4 (see Phase 7b); combined full-gate pass; independent reviewer; push; CI per job (ubuntu, macos, windows); then ask the owner to playtest; only then Phase 8.
 
@@ -63,7 +64,7 @@ Otherwise decide, note it in the log, keep going. **Stop after phase 4b and summ
 - [x] Commands, events, log, snapshots, replay tests; role traits and checks
 - [x] Review fixes: role check in league, Actor (role + team), validated load, fallible apply
 
-## Phase 1: single game (in progress)
+## Phase 1: single game (done)
 
 Gate: `cargo test --release -- --ignored calibration` simulates 100,000 games between fictional calibration teams; league K%, BB% and HR/PA each within ±3% **relative** of the 2015-2019 target.
 
@@ -87,7 +88,7 @@ Calibration (kept out of git)
 - [x] `tools/`: parse events; write league rates + talent spread to `data/internal/params.json`. No player id or name written anywhere.
 - [x] Calibration crate: fictional rosters (generated names, talent drawn from the spread), 100k games, table of simulated vs target
 - [x] `THIRD_PARTY.md`: Retrosheet notice (no Lahman entry; not used)
-- [ ] Gate run + reviewer subagent + log entry
+- [x] Gate run + reviewer subagent + log entry (see Log, Phase 1)
 
 Decisions so far
 - ±3% is relative. Extra innings use the runner-on-second rule.
@@ -118,7 +119,7 @@ Gate: 50-season runs show no talent inflation or collapse and no insolvent teams
 - [x] Minor leagues with level equivalencies
 - [x] Draft: noisy team-specific boards, signability
 - [x] Minimal economy: revenue, payroll cap, budget; fixed-behavior owner and commissioner agents
-- [x] Stability gate passes on all 5 seeds (era shift, see Log). **FAILING GATE: `draft_gate` (career WAR about 2x the sourced ranges, bust rate low, picks 91-300 reach too low; see Log, 2026-10-11 close-out).**
+- [x] Stability gate passes on all 5 seeds (era shift, see Log). **FAILING GATE: `draft_gate`; current numbers and attempts in `ISSUES.md` section 2** (the Log entries below hold the older numbers).
 
 ## Phase 4a: manager AI
 
@@ -136,10 +137,10 @@ Gate: AI beats baseline agents at a stated confidence level; presets rank in ord
 - [x] Surplus-value GM model; trade, free-agency and draft AI with personalities
 - [x] Difficulty profiles and presets: Rookie, Veteran, All-Star, Hall of Fame (information and decision quality only, never the dice)
 - [x] Evaluation ladder with listed exploit bots
-- [x] Gate run + reviewer + log entry (exploit-bot check passes after the close-out fixes; see Log)
+- [x] Gate run + reviewer + log entry (exploit-bot check passed after the close-out fixes, see Log; the Phase 7 economy broke the hoarder check again: `ISSUES.md` section 1)
 - [ ] Final summary to the user (superseded: the user handed over a full roadmap; Phase 5 next)
 
-## Phase 5: UI and saves (in progress)
+## Phase 5: UI and saves (done 2026-10-11)
 
 Gate: a headless scripted test plays whole seasons through the public protocol only, saves, reloads and gets identical results; CI speed benchmarks with a numeric target set after profiling a full season.
 
@@ -165,7 +166,9 @@ Design (decided, 2026-10-11)
 - [x] `.github/workflows/release.yml`: clean build + self-test on all three systems (green by hand on db428f5, and on the tag)
 - [x] Tag v0.1
 
-## STOP: summary for the playtest (written 2026-10-11)
+## STOP: summary for the playtest (written 2026-10-11; SUPERSEDED)
+
+Historical: the v0.1 playtest brief, kept as written. Its numbers (trade counts, the credit line in the hoarder note, draft WAR) are as of v0.1; the current state is in HANDOFF and `ISSUES.md`.
 
 **Run it**
 
@@ -203,13 +206,13 @@ cargo run --release -p ui
 
 Phase 7 (owner and commissioner roles) is built (see its section); Phase 8 (online leagues) is NOT started. The user said "keep going" after the Phase 6 playtest stop.
 
-## Phase 7: owner and commissioner roles (built; one older gate failing; started 2026-10-12 on the user's "keep going")
+## Phase 7: owner and commissioner roles (built 2026-10-12; the hoarder gate it broke is open, `ISSUES.md` 1)
 
 Gate: any role human or AI over a 50-season run on 5 seeds, no runaway payrolls or insolvent teams.
 
 Design (decided)
 - Economy: each club has a `Stadium` (capacity in thousands of seats, quality multiplier, ticket price). Local revenue = 45% market (as before) + gate. Gate = crowd x 81 home games x price, where crowd = min(demand, capacity) and demand = a market base (the old local-revenue model, so default parks and the $35 reference price keep the old revenue level) x (price/35)^-1.5 x quality. So the owner's best price sits where demand just fills the park. Park upkeep is in `other`; quality wears 10% a year toward 1.0.
-- Owner commands (offseason only): `SetBudget` (existing), `SetTicketPrice`, `BuildStadium {amount}` (cash, credit line applies; +0.05k seats and +1/600 quality per $M), `SetStance {Contend|Balanced|Rebuild}` (directive to the GM).
+- Owner commands (offseason only): `SetBudget` (existing; refused above the lenders' limit `World::budget_limit`), `SetTicketPrice`, `BuildStadium {amount}` (paid in cash; refused if cash would go below zero; +0.05k seats and +1/600 quality per $M), `SetStance {Contend|Balanced|Rebuild}` (directive to the GM).
 - Commissioner command (Offseason/Progressed only): `SetRules` within `Rules::check` limits; club budgets are clamped to the new floor/cap in the same event. Smarter commissioner uses it against runaway payrolls and insolvency.
 - Old saves load: new fields have serde defaults.
 
@@ -230,7 +233,7 @@ Owner decisions (2026-10-12): no online league until every local-game issue is f
 - Free-agent price: about $9-10M per WAR (FanGraphs $/WAR series: 9.0M 2014-16; 2023 10.2M and 2024 8.9M informal). Payroll-win correlation r about 0.4 in a typical year, weak in 2023. Inflation mechanic (our own design; OOTP's is undocumented): a league-wide salary scale that grows yearly and moves prices, floor, cap, min salary, revenue baselines and ticket reference together.
 
 Order of work
-- [ ] Batch 0 (running): debt rule merged with trading; usage/injury/fatigue/platoon/talent pipeline audit and build; draft_gate re-measured (definition change is the owner's call).
+- [ ] Batch 0 (partly done): debt rule and the trading overhaul are merged and in `main`; `draft_gate` re-measured (`ISSUES.md` 2; a definition change is the owner's call); the usage/injury/fatigue/talent-pipeline build sits unverified on branch `worktree-agent-a48d2592c901712db` (HANDOFF, Branches).
 - [ ] Batch 1: inflation + free-agent repricing to real $/WAR (fixes the hoarder gate); luxury tax; richer gate model (fan interest, home/away split, playoff gate, media, merchandise).
 - [ ] Batch 2: service time, minor-league options, waivers/DFA, 40-man; salary arbitration and extensions; Rule 5; international spending pool.
 - [ ] Batch 3: trigger-based usage policies for bullpen, rotation, lineup and platoons (UI rule list + JSON for agents); injury tiers and proneness, fatigue, platoon splits, park factors and weather; personality/morale (later).
@@ -252,11 +255,11 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 
 ## Known gaps
 
-- (2026-10-11, Phase 5) Review notes not fixed: `from_save` ignores the stored calibration id and engine version (a save from another calibration loads silently); AI general managers are rebuilt fresh on load, so play after a load can differ from an uninterrupted game; `start_next_season` runs its AI rounds before it can refuse; `LocalStore::list` does not show a slot that only has `.bak` files; two autosaves in the same second can pick the same slot; slot names collide by case on macOS/Windows. The UI has no graphical test (only compile, clippy, a start-up run and the protocol gate); the Player screen's Back button always goes to Roster.
+- (2026-10-11, Phase 5) Review notes not fixed: AI general managers are rebuilt fresh on load, so play after a load can differ from an uninterrupted game; `start_next_season` runs its AI rounds before it can refuse; `LocalStore::list` does not show a slot that only has `.bak` files; two autosaves in the same second can pick the same slot; slot names collide by case on macOS/Windows. The UI has no graphical test (only compile, clippy, a start-up run and the protocol gate). Fixed since: a load or import refuses a save made with other calibration data and notes an engine-version change (`Session::from_save`, `import_bundle`); the Player screen's Back button returns to the screen it came from.
 
-- (2026-10-12, Phase 7) After a rescue `attendance_prev` is stale for a year; old saves get `Stadium::for_market(1.0)`; the owner desk does not show the lender budget limit; `clamp_budgets` in the host is dead code; the Overview label "Play the playoffs..." shows in Progressed/Settling for office-holders; the roles gate uses `run_year_with` with built-in GMs and managers (no host-level run, no human GM or field manager); the owner and commissioner screens were not played by a person; the UI ballpark amount range 0.1..1000 is a guess; receivership stops at the payroll floor and ignores position minimums (clubs must refill in the offseason; the roles gate checks roster legality, but no unit test plays a rescued club into StartSeason); event logs from before receivership would replay differently (saves are snapshots).
+- (2026-10-12, Phase 7) Old saves get `Stadium::for_market(1.0)`; the Overview label "Play the playoffs..." shows in Progressed/Settling for office-holders; the roles gate uses `run_year_with` with built-in GMs and managers (no host-level run, no human GM or field manager); the owner and commissioner screens were not played by a person; the UI ballpark amount range 0.1..1000 is a guess. Fixed or superseded since: the owner desk shows the lenders' limit (`crates/host/tests/roles.rs`); `clamp_budgets` is called at season close; rescues and receivership are gone (debt rule, Phase 7b), so the stale `attendance_prev` after a rescue and the receivership roster notes no longer apply (`crates/gm/tests/debt_offseason.rs` plays a club in debt through an offseason into a legal season start).
 
-- (2026-10-11) `trading_happens` only prints counts and asserts nothing; with the stronger reference it printed 3 proposed, 0 accepted in one 5-year run. Trade volume needs a real behaviour check (Phase 4b item, "behavior checks against real baseball").
+- (2026-10-11) ~~`trading_happens` only prints counts and asserts nothing; with the stronger reference it printed 3 proposed, 0 accepted in one 5-year run.~~ Fixed 2026-10-12: the trading overhaul (`crates/gm/src/trade.rs`) and `crates/gm/tests/trade_gate.rs` gate accepted trades a season at 40-110 (measured 49-59; real MLB about 54) and the value lost by easy presets to hard ones.
 - (2026-10-11) Runs/team-game in the world runs at about 5.0 vs the DH-equivalent target 4.70 (+7%, inside the +-10% world band).
 - Calibration gate is close to tautological for K/BB/HR (rosters are centred on the target); runs/team-game is now gated and does depend on baserunning/fielding.
 - Runs target is DH-equivalent: real 4.48 + pitcher-PA replacement (textbook linear weights, +0.22) = 4.70. Sim is 4.70 under 2015-2019 rules (`extra_inning_runner: false`); the extra-inning runner adds ~0.04. The earlier 4.74 was these two effects, not an engine bug.
@@ -269,7 +272,7 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 - `League::from_events` leaves `commands_applied` at 0 (events carry no commands).
 - Role/team binding covers only commands that name teams; commands that name a game or player will need their team resolved from state in `league::permissions::target_teams`.
 
-- Season: no series, travel, off-day or weather structure; fixed lineup and 5-man rotation all season (no injuries/rest until Phase 3); playoffs seeded by wins, run difference, club number (no head-to-head).
+- Season: no series, travel, off-day or weather structure; the `season` crate itself plays a fixed lineup and rotation (the `world` crate adds injuries, rest days and a 4-man bench on top; no fatigue state); playoffs seeded by wins, run difference, club number (no head-to-head).
 - Unearned runs: engine now uses the virtual-outs rule, but non-reached-base errors are not modelled, so ER/R is 0.96 vs about 0.93 real; league ERA 4.56 vs about 4.4 for the DH-equivalent environment.
 - Season gate bands for spread (0.6-1.5x of real team-season SD, ERA/win% ranges) were fixed before the first run; team AVG spread runs 1.21x real, K%/HR 0.8x.
 
@@ -278,13 +281,13 @@ Comparison of definitions: the sim's "reached" is at least one season with a pla
 - DH adjustment in the tool uses league rates that include pitchers' own PAs (about 0.2% of runs).
 
 - Phase 3 (world crate): design is `world` crate with strict events (`World::apply`), commands via `World::execute`, driver `run_year`, agents (`GmView` shows only noisy opinions); founding runs a burn-in of offseasons (no games) from a seeded population, with opening cash restored afterwards.
-- Aging curve (peak 27, deficit by age, decline from 30), injury rates, amateur pool (spread 1.3, offsets 2.2 batters / 2.0 pitchers below league average), scouting noise (1.5 quality-sd on amateurs) and age-scaled development luck are assumptions tuned for stability, not fitted to data (no age data source approved).
+- Aging curve (peak 27, deficit by age, decline from 30), injury rates, amateur pool (first spread 1.3 and offsets 2.2 batters / 2.0 pitchers below league average; now spread 1.0 and offsets 2.5 / 2.4 after the Phase 3 follow-up and the 2026-10-12 draft work, `ISSUES.md` 2), scouting noise (1.5 quality-sd on amateurs) and age-scaled development luck are assumptions tuned for stability, not fitted to data (no age data source approved).
 - Minors are roster tiers only (no minor-league games); minor leaguers get the same injury rolls as major leaguers; level equivalencies are not modelled.
 - Majors still hold some 17-20 year-olds (about 4% of major leaguers) when a teenager out-scouts the field; BB% runs about +10% over the real league (selection on walk-heavy talent), runs/team-game about +4% (4.90 vs 4.70).
-- Free agency is one signing per club per round with fixed GM behaviour; releases cost the remaining salary; contracts are salary x years only (no arbitration, no options, no trades yet).
+- Free agency is one signing per club per round; releases cost the remaining salary; contracts are salary x years only (no arbitration, no options; trades since Phase 4b).
 - Phase 3 follow-up (after the draft bands were grounded): one bounded model attempt (young players' yearly development luck 0.22 -> 0.55 scaled by youth; pool offsets recalibrated to 2.5 batters / 2.4 pitchers; founding burn-in 12 -> 30 years because the league mix was still settling) brought "reach the majors" for picks 1-10, 11-30, 31-90 into or next to the sourced ranges, but mean career WAR stays about 2x the sourced range in every bucket (picks 1-10 about 20-25 vs 9.5-12.8), bust rates are 0.47-0.52 / 0.64-0.69 vs 0.60-0.65 / 0.71-0.85, and picks 91-300 reach 0.13 vs 0.17-0.35. Accepted and logged; `draft_gate` fails on all five seeds.
 - Phase 3 stability gate over five seeds: K%, BB%, level of HR% and runs, major-league quality worst-season band and solvency pass everywhere; the decade-over-decade ratio check fails on some seeds (HR/PA ratio 1.096 on seed 1, 0.9496 on seed 2 against 0.95-1.05; batter quality drift 0.176 sd on seed 1 against 0.15). Cause: league mix wanders because nothing anchors it (no feedback from run environment to talent) and talent turnover is slow. Across 20 other seeds the mean decade ratio is 1.00-1.02 for K/BB/HR/runs (no trend) with standard deviations of 2.2% (K), 3.2% (BB), 4.4% (HR), 1.9% (runs), so a trend-free model exceeds a +-5% band on a given metric in roughly 10-25% of seeds. Not changed (thresholds fixed); the band or the statistic (mean ratio across seeds, or a per-seed trend test) needs a decision.
-- Phase 3 information and limits: asking salaries and amateur bonus demands now come from a market view that is no better informed than a scout (`scout::public_quality`, `scout::amateur_demand`); `apply` validates events before changing anything and enforces roster limits at season start (13 majors per kind, level capacities, 49 per kind) and a hard 60 per kind at signing; club spending that would take cash below -25M is refused (`CREDIT`); bonuses and released contracts show up as `spent` in the next season's books. Not yet done: a commissioner force-pass for a stalled draft.
+- Phase 3 information and limits: asking salaries and amateur bonus demands now come from a market view that is no better informed than a scout (`scout::public_quality`, `scout::amateur_demand`); `apply` validates events before changing anything and enforces roster limits at season start (13 majors per kind, level capacities, 49 per kind) and a hard 60 per kind at signing; club spending that would take cash below -25M was refused (`CREDIT`; SUPERSEDED by the Phase 7b debt rule: a club may go into debt but is then frozen out of new commitments); bonuses and released contracts show up as `spent` in the next season's books. Not yet done: a commissioner force-pass for a stalled draft.
 - Phase 4a limits: the table manager's edge (+0.69 win% per club-season, z 4.5) mixes two sources, steal decisions and relief use; it also switches off the engine's closer-in-save-spot rule outside its own leverage rules, so part of the edge may come from that rather than from the tables. Engine steal success is a flat league rate, not runner-specific, so steal decisions carry no skill information. `Go`/`Hold` skip the engine's attempt draw, so managed and baseline games diverge in the dice stream after the first steal (no common random numbers; adds noise, not bias). `DecisionLog` and the shared tables are `Arc`s shared by world clones (diagnostic only, not in `PartialEq`). Live in-game external field managers are exercised in exhibition games only; season batch play uses the built-in `Tactics` policies. An out-of-phase commissioner action is overruled by the calendar and logged as a violation; garbage/failed replies fall back to harmless defaults.
 - Phase 4b ladder caveats (reviewer): the win% gap of a tested club is about 1.25x its true edge (the 24 reference clubs absorb part of it); the standard errors treat seasons as independent although they are autocorrelated, so the stretcher failure (z 2.7) is weak and the hoarder failure (z 9) is robust; preset runs include the warm-up seasons; the preset order is partly caused by `spends_budget` (Rookie never spends leftover budget); the reference was strengthened after the bot results were seen. Review fixes applied: releases of excess players are waived only above the per-kind limit, a trade may not leave a club below 13 majors of a kind, a club may have at most 4 open offers, and a league office fallback signs players for a short club before the season starts (the garbage-agent case).
 

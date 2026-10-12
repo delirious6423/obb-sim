@@ -5,9 +5,10 @@ club as general manager: scout and draft, sign free agents, trade, set the
 depth chart, and play out the seasons. Every player and club is invented.
 The code is closed source.
 
-**Status: v0.1 alpha.** One person plays the general manager of one club.
-The owner, commissioner and field-manager seats, and the other 29 general
-managers, are run by the computer. Online leagues are planned, not built.
+**Status: v0.1 alpha.** One person plays the general manager of one club,
+and can also take the club's owner seat and the league's commissioner seat.
+Every seat the person does not hold, including the other 29 general
+managers, is run by the computer. Online leagues are planned, not built.
 
 ## Run it
 
@@ -26,7 +27,8 @@ scripts/build.sh
 On Windows, run the script in Git Bash, or run the `cargo` command above.
 
 `game --self-test` founds a small league and plays 20 days with no window.
-CI uses it on all three systems.
+The release workflow runs it (through `scripts/build.sh`) on all three
+systems.
 
 ## Play
 
@@ -40,7 +42,9 @@ CI uses it on all three systems.
 3. **Depth chart**: promote or demote players between the majors and the
    three minor-league levels. "Auto-arrange" lets your staff do it.
 4. **Free agents, Trades, Draft, Finances**: your tools as general manager.
-   Grades shown are what your scouts think, not the true talent.
+   Grades shown are what your scouts think, not the true talent. With the
+   owner seat you also set the budget, ticket price, ballpark spending and
+   the club's stance; with the commissioner seat, the league rules.
 5. **Saves**: save to a named slot, quick-save, load, delete. The game also
    keeps rotating autosaves. Saves are in `~/.baseball-sim/saves`
    (set `BASEBALL_SIM_SAVES` to use another folder).
@@ -61,8 +65,9 @@ cargo run --release -p host --example bench -- --check   # speed gate
 python3 tools/licenses.py                                # licence audit
 ```
 
-Project rules and the crate map: `CLAUDE.md`. Plan, gates and known gaps:
-`PLAN.md`. Data sources and licences: `THIRD_PARTY.md`.
+Project rules and the crate map: `CLAUDE.md`. Where the project stands:
+`AGENT_HANDOFF.md`. Plan, gates and known gaps: `PLAN.md`; the failing gates
+in detail: `ISSUES.md`. Data sources and licences: `THIRD_PARTY.md`.
 
 ## Data
 
