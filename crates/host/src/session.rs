@@ -27,7 +27,7 @@ use crate::api::{
 use crate::{difficulty, views};
 
 const LEAGUE_NAME: &str = "The Fictional League";
-const ENGINE_VERSION: &str = concat!("sim ", env!("CARGO_PKG_VERSION"), " / rules 1");
+const ENGINE_VERSION: &str = concat!("sim ", env!("CARGO_PKG_VERSION"), " / rules 2");
 /// Days played per step of a long simulation: progress is reported and
 /// cancellation is checked between steps.
 const DAYS_PER_STEP: u16 = 2;
@@ -291,7 +291,7 @@ impl Host {
                 export_save(self.store.as_ref(), &slot, &folder)
             }
             Request::ImportSave { path, as_name } => {
-                import_save(self.store.as_ref(), &path, as_name.as_deref())
+                import_save(&self.cal, self.store.as_ref(), &path, as_name.as_deref())
             }
             Request::DeleteSave { slot } => {
                 let Some(store) = &self.store else {
@@ -1075,6 +1075,7 @@ pub(crate) fn export_save(store: Option<&LocalStore>, slot: &str, folder: &str) 
 /// save folder is touched: the file, the calibration tag, the settings and
 /// the league snapshot. The slot is never overwritten.
 pub(crate) fn import_save(
+    cal: &Calibration,
     store: Option<&LocalStore>,
     path: &str,
     as_name: Option<&str>,
@@ -1086,8 +1087,18 @@ pub(crate) fn import_save(
         let opened =
             storage::OpenedBundle::read(std::path::Path::new(path)).map_err(|e| e.to_string())?;
         parse_meta(&opened.data.meta)?;
-        serde_json::from_slice::<world::state::Snapshot>(&opened.data.snapshot)
+        let snap = serde_json::from_slice::<world::state::Snapshot>(&opened.data.snapshot)
             .map_err(|e| format!("the file does not hold a league: {e}"))?;
+        if let Some(saved) = opened.data.meta.get("calibration") {
+            let here = calibration_id(cal);
+            if *saved != here {
+                return Err(format!(
+                    "the save was made with other calibration data ({saved}); this build has {here}"
+                ));
+            }
+        }
+        World::restore(cal.params, Model::from_calibration(cal), snap)
+            .map_err(|e| format!("the file does not hold a consistent league: {e}"))?;
         let mut notice = String::new();
         if opened.manifest.engine_version != ENGINE_VERSION {
             notice = format!(

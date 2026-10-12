@@ -139,7 +139,7 @@ fn run(
                     export_save(open().as_ref(), &slot, &folder)
                 }
                 (None, Request::ImportSave { path, as_name }) => {
-                    import_save(open().as_ref(), &path, as_name.as_deref())
+                    import_save(cal, open().as_ref(), &path, as_name.as_deref())
                 }
                 (Some(h), r) => h.handle(r),
                 (None, _) => Response::Failed("no game in progress".into()),

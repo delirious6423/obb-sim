@@ -73,3 +73,9 @@ Every number below was measured in a run; "sim" is our game, "real" is MLB with 
 - Economy branch (repricing, partial inflation): merge, hold, or discard?
 - Usage branch: merge, hold, or discard?
 - Main is pushed. Its long gates have not been re-run on the combined state.
+
+## 5. Review notes on merged main (verifier, 2026-10-12)
+- Fixed: ENGINE_VERSION bumped to "rules 2" (old saves now show the 'results may differ' notice); `.bsave` import now checks the calibration id and runs `World::restore` before writing into the save folder.
+- Season-in-progress saves made before rest days/bench keep their recorded games but play the rest under the new rules; old box scores may not replay (they fail gracefully, return None).
+- Test edits since the last push that the owner has NOT individually approved (all follow from removing the credit line): world.rs release filter `owed < cash + CREDIT` -> `owed <= cash`; economy.rs ballpark test cash `-CREDIT + 1` -> `4.0`; crates/gm/tests/agent.rs and storage/tests/local_store.rs changed (the first replaced rookies_do_not_trade_and_veterans_only_answer with every_preset_proposes_trades). Approved: roles-gate debt criterion, deleted rescue test, credit-line test rename, trade-gate assertion on wins.
+- `World::restore` does not check budget against the lender limit (closing-time clamp covers it).
