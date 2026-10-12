@@ -1,5 +1,7 @@
 # Project rules
 
+@AGENTS.md
+
 Closed-source, OOTP-style baseball management sim in Rust. **Fictional players and teams only.**
 
 ## Architecture rules (always apply)
@@ -15,7 +17,7 @@ Closed-source, OOTP-style baseball management sim in Rust. **Fictional players a
 
 ## Definition of done
 
-Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` before saying anything is done. Report failures as they are.
+Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` before saying anything is done. Report failures as they are. `cargo test --workspace` also runs the doctests. `AGENTS.md` lists the other commands.
 
 ## Crates
 
@@ -27,6 +29,11 @@ Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` a
 | `ai` | Role traits, role views, `vet` (early batch check) |
 | `storage` | Persistence (not started) |
 | `cli` | Binary front end |
+| `calibration` | Calibration of the engine against league-wide rates; generated rosters; file I/O lives here, outside `sim-core` |
+| `season` | Full season: schedule, games, standings, playoffs; pure like `sim-core` |
+| `world` | The living league: players over time, minor leagues, draft, free agency, club finances |
+| `tactics` | Field-manager intelligence: run-expectancy and win-probability tables and a manager that uses them |
+| `connect` | Agent connectors: typed observations and actions for each of the four roles; JSON for external seats |
 
 ## Notes
 
@@ -37,3 +44,15 @@ Run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` a
 ## Working method
 
 `PLAN.md` is the project's memory and the source of truth for what to do next. After a context reset, read it and this file, then continue at the first unticked item. Log every new dependency or data source in `THIRD_PARTY.md`. Calibration data lives in git-ignored `data/internal/` and holds no real player id, name or stat line.
+
+## Claude Code tools
+
+- Symbols, types, references: the rust-analyzer LSP plugin. Use it before text search.
+- Fuzzy paths and repeated indexed searches: fff MCP (`find_files`, `grep`, `multi_grep`). Exact strings: `rg`.
+- Plugins and MCP servers load when the app starts. If they are missing, tell the user to restart the app.
+
+## Skills (these limits win over the skill text)
+
+- `impeccable-rust`: unsafe code, concurrency changes, rewrites, big optimizations, verification reviews. Pick only the checks that match the change. Run only `impeccable doctor` and `impeccable bench-guard`. Never run `impeccable setup`, `impeccable run`, or `impeccable sanitize memory|leak`; they build a large Docker image. Ignore any step that says to commit.
+- `hotpath_init`: first instrumentation only. Use 3 to 5 functions in total with `#[hotpath::measure]`; no `measure_all` in the first pass. Merge passthroughs into the existing `[features]` and never edit `default`. Do not change public signatures. Do not enable `hotpath-cloud`. Never overwrite an existing `hotpath/policy.toml`. Never run `hotpath init` or `hotpath init-ci` in a session. Do not instrument `sim-core` or `season` until the user says so.
+- `simplified-technical-english`: new or edited technical docs only (`AGENTS.md`, `docs/`). Not for code, messages, chat answers, `PLAN.md`, or unrelated files.
