@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use calibration::Calibration;
 use connect::{
     BuiltInCommissioner, BuiltInGm, BuiltInManager, BuiltInOwner, GmAction, GmAgent, GmStage,
-    GmTurn, Seats, commissioner_step, draft_turn, free_agency_round, roster_stage, set_tactics,
-    start_season, start_with, team_actor, trade_round,
+    GmTurn, Seats, TRADE_ROUNDS, commissioner_step, draft_turn, free_agency_round, roster_stage,
+    set_tactics, start_season, start_with, team_actor, trade_round,
 };
 use gm::SurplusGm;
 use protocol::Actor;
@@ -731,7 +731,7 @@ impl Host {
         ctl.start("Starting the season", 4);
         let skip = self.skip();
         let mut log = Vec::new();
-        for _ in 0..3 {
+        for _ in 0..TRADE_ROUNDS {
             if !trade_round(&mut self.world, &mut self.seats, &mut log, skip) {
                 break;
             }
