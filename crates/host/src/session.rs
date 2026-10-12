@@ -743,6 +743,23 @@ impl Host {
         }
         ctl.start("Starting the season", 4);
         let skip = self.skip();
+        // The person's roster is checked before any other club moves, so a
+        // refusal leaves the league exactly as it was. Without the general
+        // manager seat the AI sets the roster in the rounds below.
+        if self.roles.gm && !self.world.roster_problems(self.club).is_empty() {
+            let before = self.world.clone();
+            self.auto_roster();
+            let mut problems = self.world.roster_problems(self.club);
+            if !problems.is_empty() {
+                // Staff could not fix it without releasing players; the
+                // person must (sign or release) before the season can start.
+                self.world = before;
+                let first = problems.remove(0);
+                return Err(format!("Your roster is not in order: {first}"));
+            }
+            self.notices
+                .push("Your roster was set by your staff.".into());
+        }
         let mut log = Vec::new();
         for _ in 0..3 {
             if !trade_round(&mut self.world, &mut self.seats, &mut log, skip) {
@@ -753,19 +770,6 @@ impl Host {
         while free_agency_round(&mut self.world, &mut self.seats, &mut log, skip) {}
         ctl.step(2);
         roster_stage(&mut self.world, &mut self.seats, &mut log, skip);
-        // Without the general manager seat the AI has already set the roster.
-        if self.roles.gm && !self.world.roster_problems(self.club).is_empty() {
-            self.auto_roster();
-            let mut problems = self.world.roster_problems(self.club);
-            if !problems.is_empty() {
-                // Staff could not fix it without releasing players; the
-                // person must (sign or release) before the season can start.
-                let first = problems.remove(0);
-                return Err(format!("Your roster is not in order: {first}"));
-            }
-            self.notices
-                .push("Your roster was set by your staff.".into());
-        }
         ctl.step(3);
         set_tactics(&mut self.world, &mut self.seats, &mut log);
         start_season(&mut self.world, &mut self.seats, &mut log).map_err(|e| e.to_string())?;
@@ -1045,6 +1049,8 @@ mod tests {
     use super::*;
     use crate::api::{Difficulty, NewGame, Preset};
     use storage::{SaveKind, SlotId};
+    use world::rating::Kind;
+    use world::state::ROSTER_PER_KIND;
 
     fn saved_game(dir: &std::path::Path, tag: &str) -> (Host, LocalStore) {
         let store = LocalStore::open(dir.join(tag)).expect("store");
@@ -1160,5 +1166,41 @@ mod tests {
             s.world.phase = Phase::Offseason;
             assert_eq!(label(&mut s), "Close the books, then on to the draft");
         }
+    }
+
+    /// A person holding the GM seat whose roster no staff move can fix is
+    /// refused before any other club moves: the league is left as it was.
+    #[test]
+    fn a_broken_roster_is_refused_before_the_league_moves() {
+        let plain = Roles {
+            gm: true,
+            owner: false,
+            commissioner: false,
+        };
+        let mut s = session(plain);
+        s.world.phase = Phase::FreeAgency;
+        let club = usize::from(s.club);
+        // Too many batters on the roster: only the person may release one.
+        let extra: Vec<PlayerId> = s
+            .world
+            .players
+            .values()
+            .filter(|p| p.team.is_none() && p.kind == Kind::Batter)
+            .map(|p| p.id)
+            .take(ROSTER_PER_KIND + 1)
+            .collect();
+        for id in extra {
+            s.world.players.get_mut(&id).expect("player").team = Some(s.club);
+            s.world.clubs[club].players.insert(id);
+        }
+        assert!(!s.world.roster_problems(s.club).is_empty());
+        let before = format!("{:?}", s.world);
+        let notices = s.notices.len();
+        let err = s
+            .start_next_season(&Control::default())
+            .expect_err("a broken roster is refused");
+        assert!(err.starts_with("Your roster is not in order"), "{err}");
+        assert_eq!(format!("{:?}", s.world), before);
+        assert_eq!(s.notices.len(), notices);
     }
 }
