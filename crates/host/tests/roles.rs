@@ -319,7 +319,7 @@ fn a_budget_above_the_lenders_limit_is_brought_under_it_at_close() {
     let cap = league(&c).rules.payroll_cap;
     ok(c.call(Request::Act(Action::SetBudget { payroll: cap })));
     // Spend the club's cash (up to 200) so the lenders' room shrinks. The
-    // build may not take the club past its credit line.
+    // build may not take the club below zero cash.
     let cash = owner(&c).cash;
     let amount = cash.min(200.0);
     assert!(amount > 0.0, "the club needs cash to build, has {cash}");
