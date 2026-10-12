@@ -808,6 +808,7 @@ impl World {
             players: scratch.players.values().cloned().collect(),
             free_agents: scratch.free_agents.iter().copied().collect(),
             next_player: scratch.next_player,
+            era: scratch.era,
         }))
     }
 }

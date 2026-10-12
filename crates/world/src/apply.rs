@@ -65,6 +65,7 @@ impl World {
         }
         self.free_agents = f.free_agents.iter().copied().collect();
         self.next_player = f.next_player;
+        self.era = f.era;
         self.finances = vec![Vec::new(); self.clubs.len()];
         self.phase = Phase::Regular;
         Ok(())
@@ -102,6 +103,9 @@ impl World {
                 }
                 if f.next_player < top {
                     return invalid("next player id is already in use");
+                }
+                if f.era.iter().flatten().any(|e| !e.is_finite()) {
+                    return invalid("era shift is not a number");
                 }
             }
             Event::DaysPlayed {

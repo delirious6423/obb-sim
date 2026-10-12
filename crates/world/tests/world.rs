@@ -587,3 +587,21 @@ fn a_damaged_snapshot_is_refused() {
     snap.players.get_mut(&id).expect("player").team = Some(3);
     assert!(World::restore(GameParams::reference(), Model::generic(), snap).is_err());
 }
+
+/// The burn-in moves the era shift, and every player's talent includes it, so
+/// the founded league must carry it: otherwise the first progression drops
+/// the shift from everyone at once and the league jumps.
+#[test]
+fn founding_keeps_the_burn_in_era() {
+    let mut w = fresh(5);
+    w.execute(&Actor::commissioner(), Command::Found { burn_in_years: 4 })
+        .expect("found");
+    assert!(w.era.iter().flatten().any(|e| *e != 0.0));
+    for p in w.players.values().filter(|p| p.team.is_some()) {
+        let k = usize::from(p.kind == world::rating::Kind::Pitcher);
+        let (z, _) = world::player::talent_at(&w.model, p, p.age(w.year), &w.era[k]);
+        for (a, b) in z.iter().zip(&p.z) {
+            assert!((a - b).abs() < 1e-9, "{a} vs {b}");
+        }
+    }
+}
