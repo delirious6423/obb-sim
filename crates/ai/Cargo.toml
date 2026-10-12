@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 league.workspace = true
 protocol.workspace = true
-thiserror.workspace = true
 
 [lints]
 workspace = true

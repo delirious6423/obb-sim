@@ -1,4 +1,4 @@
-//! A club deep in debt (there are no rescues) goes through a full offseason
+//! Debt rule, end to end: a club deep in debt goes through a full offseason
 //! with built-in general managers, frozen out of every signing but the
 //! minimum-salary fills, and starts the season with a roster the rules
 //! accept.

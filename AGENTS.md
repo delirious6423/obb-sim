@@ -5,7 +5,7 @@ Shared rules for coding agents in this Rust project. The architecture rules, the
 ## Project
 
 - Purpose: closed-source, OOTP-style baseball management sim. Fictional players and teams only.
-- Workspace: the members are listed in the root `Cargo.toml`. The binary `sim` is in `crates/cli`.
+- Workspace: the members are listed in the root `Cargo.toml` (14 crates; `CLAUDE.md` has the crate map). The command-line binary `sim` is in `crates/cli`. The desktop binary `game` is in `crates/ui`.
 - Edition 2024, resolver 3. No `rust-version` and no `rust-toolchain.toml` are set. CI uses the stable toolchain on Linux, macOS, and Windows.
 - Async runtime: none. Global allocator: none set. Parallel code uses `rayon`.
 - Lints: the workspace forbids `unsafe_code`. `clippy.toml` bans the std `HashMap` and `HashSet`.
@@ -17,7 +17,10 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace                          # the CI gate; it also runs doctests
 cargo test --release -- --ignored calibration   # Phase 1 gate; slow; needs data/internal/params.json
-cargo run --release -p cli -- bench 20          # speed baseline
+cargo run --release -p cli -- bench 20          # speed baseline; compare the digest, not the time
+cargo run --release -p host --example bench -- --check   # CI speed gate (found, days, season, offseason)
+cargo run --release -p ui --bin game -- --self-test      # headless smoke test of the desktop build
+python3 tools/licenses.py                       # licence audit of Cargo.lock
 ```
 
 Optional checks. CI does not run them:

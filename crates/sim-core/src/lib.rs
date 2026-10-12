@@ -1,6 +1,7 @@
 //! Pure simulation core: no I/O, no clock, no global state.
 //!
-//! - [`play_game`] is the tiny placeholder game the league crate uses for now.
+//! - [`play_game`] is the tiny Phase 0 placeholder game, kept for its golden
+//!   tests (the same values on every platform).
 //! - [`simulate_game`] is the real engine: log5 plate appearances, baserunning,
 //!   fielding, relief pitching. Parameters and players are passed in as data.
 

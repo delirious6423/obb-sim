@@ -907,17 +907,7 @@ impl Host {
             .map_err(|e| e.to_string())?;
         let snap: world::state::Snapshot =
             serde_json::from_slice(&loaded.data.snapshot).map_err(|e| e.to_string())?;
-        // A league built on other calibration data would play differently
-        // from the one that was saved, so refuse it. Saves from before the
-        // key existed carry no id and are not refused.
-        if let Some(saved) = loaded.data.meta.get("calibration") {
-            let here = calibration_id(cal);
-            if *saved != here {
-                return Err(format!(
-                    "the save was made with other calibration data ({saved}); this build has {here}"
-                ));
-            }
-        }
+        check_calibration(cal, &loaded.data.meta)?;
         let meta = parse_meta(&loaded.data.meta)?;
         let Meta {
             club,
@@ -1089,14 +1079,7 @@ pub(crate) fn import_save(
         parse_meta(&opened.data.meta)?;
         let snap = serde_json::from_slice::<world::state::Snapshot>(&opened.data.snapshot)
             .map_err(|e| format!("the file does not hold a league: {e}"))?;
-        if let Some(saved) = opened.data.meta.get("calibration") {
-            let here = calibration_id(cal);
-            if *saved != here {
-                return Err(format!(
-                    "the save was made with other calibration data ({saved}); this build has {here}"
-                ));
-            }
-        }
+        check_calibration(cal, &opened.data.meta)?;
         World::restore(cal.params, Model::from_calibration(cal), snap)
             .map_err(|e| format!("the file does not hold a consistent league: {e}"))?;
         let mut notice = String::new();
@@ -1150,6 +1133,24 @@ fn ordinal(n: usize) -> String {
 /// The identity of the calibration data a league was built on.
 fn calibration_id(cal: &Calibration) -> String {
     format!("{} | {} PA", cal.source, cal.pa)
+}
+
+/// A league built on other calibration data would play differently from the
+/// one that was saved, so refuse it. Saves from before the key existed carry
+/// no id and are not refused.
+fn check_calibration(
+    cal: &Calibration,
+    meta: &std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
+    if let Some(saved) = meta.get("calibration") {
+        let here = calibration_id(cal);
+        if *saved != here {
+            return Err(format!(
+                "the save was made with other calibration data ({saved}); this build has {here}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

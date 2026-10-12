@@ -2,9 +2,12 @@
 
 ## Your job
 
-You are the general manager of one club. The computer runs the owner, the
-commissioner, the field manager and the other 29 general managers.
-The other general managers are as good as the difficulty you chose.
+You are the general manager of one club. On the New game screen you can
+also take the owner seat (budget, ticket price, ballpark, stance) and the
+commissioner seat (league rules). The computer runs every seat you do not
+hold: the field manager, the other 29 general managers, and the owner and
+commissioner unless you took them. The other general managers are as good
+as the difficulty you chose.
 
 ## The year
 
@@ -17,6 +20,12 @@ The other general managers are as good as the difficulty you chose.
 4. **Trades and free agency.** Answer trade offers, propose trades, sign free
    agents. Then "Start next season" lets the other clubs finish, sets the
    rosters and starts the new year.
+
+A club whose cash is below zero is in debt: it may sign only minimum-salary
+players to fill its roster, may not take on salary in a trade, is held to the
+payroll floor and pays its owner nothing in any year it starts in debt; its
+profit goes to the debt.
+Nobody bails a club out.
 
 ## What you can see
 
