@@ -5,19 +5,27 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 use season::{BatTotals, Club, PitchTotals, Schedule, TEAMS, replay_game_with};
-use sim_core::{GameOutcome, LINEUP, ManagerMaker, Player as SimPlayer, Team};
-use tactics::{TableManagerMaker, Tables};
+use sim_core::{
+    GameOutcome, GameView, LINEUP, MAX_PITCHERS, Manager, ManagerMaker, Player as SimPlayer,
+    ReliefCall, StealCall, Team,
+};
+use tactics::{DecisionLog, TableManagerMaker, Tables};
 
 use crate::command::{Event, GameResult, Injury, Line, SeasonLine, SegmentEnd};
 use crate::player::{Level, Player, PlayerId};
 use crate::rating::{Kind, normal, uniform};
 use crate::scout::{opinion, replacement};
-use crate::state::{InSeason, LeagueLine, Tactics, World};
+use crate::state::{
+    InSeason, LeagueLine, PitcherRole, ReliefAction, ReliefRule, Tactics, Usage, World,
+};
 use crate::util::{stream, tag};
 
-const SEGMENTS: usize = 6;
+/// Rosters are re-chosen at the start of each segment (about a week), as
+/// players get hurt and come back.
+const SEGMENTS: usize = 26;
 const ROTATION: usize = 5;
-const BULLPEN: usize = 6;
+/// Relievers in the average teams the manager's tables are built from.
+const TABLE_BULLPEN: usize = 6;
 /// Healthy batters beyond the nine regulars who can play a game.
 const BENCH: usize = 4;
 /// Each regular sits about one day in this many (a rest day gives a bench
@@ -41,7 +49,7 @@ fn tables(w: &World) -> &Arc<Tables> {
                 Team::new(
                     &name,
                     (0..LINEUP).map(|n| player(&name, n)).collect(),
-                    (0..ROTATION.min(1) + BULLPEN)
+                    (0..ROTATION.min(1) + TABLE_BULLPEN)
                         .map(|n| player(&name, n))
                         .collect(),
                 )
@@ -55,55 +63,253 @@ fn tables(w: &World) -> &Arc<Tables> {
 pub(crate) struct Active {
     /// Everyone who can play a game: the nine regulars, then the bench.
     pub bats: Vec<PlayerId>,
+    /// The rotation, then the bullpen (closer last).
     pub staff: Vec<PlayerId>,
     name: String,
-    manager: Option<Arc<dyn ManagerMaker>>,
+    usage: Usage,
+    rules: Arc<[ReliefRule]>,
+    /// The club's table tactics (tables and decision log), if it uses them.
+    tables: Option<(Arc<Tables>, Arc<DecisionLog>)>,
     /// Batters in lineup order (regulars, then bench) with their sim ratings.
     batters: Vec<(PlayerId, SimPlayer)>,
-    /// Per starter: the starter, then the bullpen.
-    staffs: Vec<Vec<SimPlayer>>,
+    /// Pitchers in `staff` order with their sim ratings and the club's
+    /// opinion of them.
+    pitchers: Vec<(SimPlayer, f64)>,
+    rotation: usize,
 }
 
 impl Active {
     /// The club that takes the field on `day` of the season (`None`: the
-    /// regulars, for the playoffs). On a rest day a regular sits in turn and
-    /// a bench player takes his slot in the batting order. Returns the club
-    /// and the player id for each lineup slot.
-    pub(crate) fn club_on(&self, day: Option<usize>) -> (Club, Vec<PlayerId>) {
+    /// regulars, for the playoffs). Platoon partners start their share of
+    /// games; on a rest day a regular sits in turn and a bench player takes
+    /// his slot; the bullpen order turns over by day, so relievers who
+    /// pitched lately rest (the closer stays last). Returns the club, the
+    /// player id for each lineup slot, and the staff index (into `staff`) of
+    /// each pitcher in the game's pitcher list per rotation slot.
+    pub(crate) fn club_on(&self, day: Option<usize>) -> (Club, Vec<PlayerId>, Vec<usize>) {
         let mut slots: Vec<usize> = (0..LINEUP.min(self.batters.len())).collect();
+        let bench = self.batters.len().saturating_sub(LINEUP);
         if let Some(day) = day {
-            let bench = self.batters.len().saturating_sub(LINEUP).min(BENCH);
+            // Platoons: the weakest regulars share their slot with the best
+            // bench players.
+            let platoons = usize::from(self.usage.platoon_slots)
+                .min(bench)
+                .min(slots.len());
+            let mut taken = vec![false; slots.len()];
+            for k in 0..platoons {
+                let s = slots.len() - 1 - k;
+                taken[s] = true;
+                let turn = (day * 37 + k * 53) % 100;
+                if (turn as f64) < 100.0 * self.usage.platoon_share {
+                    slots[s] = LINEUP + k;
+                }
+            }
+            // Rest days come from the rest of the bench (or all of it).
+            let (first, spare) = if bench > platoons {
+                (platoons, bench - platoons)
+            } else {
+                (0, bench)
+            };
             let mut rested = 0;
             for (s, slot) in slots.iter_mut().enumerate() {
-                if rested < bench && (day + s) % REST_CYCLE == 0 {
+                if taken[s] || spare == 0 {
+                    continue;
+                }
+                if rested < spare && (day + s) % REST_CYCLE == 0 {
                     // Rotate the bench by day so every bench player gets turns.
-                    *slot = LINEUP + (day + rested) % bench;
+                    *slot = LINEUP + first + (day + rested) % spare;
                     rested += 1;
                 }
             }
         }
         let lineup: Vec<SimPlayer> = slots.iter().map(|&i| self.batters[i].1.clone()).collect();
         let ids: Vec<PlayerId> = slots.iter().map(|&i| self.batters[i].0).collect();
-        let rotation: Vec<Team> = self
-            .staffs
+        // The bullpen in today's order: the setup men turn over, the closer
+        // (last) stays.
+        let rot = self.rotation;
+        let pen: Vec<usize> = (rot..self.pitchers.len()).collect();
+        let order: Vec<usize> = match (day, pen.len()) {
+            (Some(day), n) if n > 2 => {
+                let setup = n - 1;
+                (0..setup)
+                    .map(|i| pen[(i + day) % setup])
+                    .chain(std::iter::once(pen[n - 1]))
+                    .collect()
+            }
+            _ => pen,
+        };
+        let starter_limit = self.usage.starter_pitches;
+        let inner: Option<Arc<dyn ManagerMaker>> = self.tables.as_ref().map(|(tables, log)| {
+            Arc::new(
+                TableManagerMaker::new(
+                    Arc::clone(tables),
+                    order.iter().map(|&i| self.pitchers[i].1).collect(),
+                    Arc::clone(log),
+                )
+                .with_limits(starter_limit, self.usage.reliever_pitches),
+            ) as Arc<dyn ManagerMaker>
+        });
+        // The set-up man: the best reliever but the closer, wherever today's
+        // order puts him (game pitcher indices start at 1 for the bullpen).
+        let setup = order
             .iter()
-            .map(|staff| {
-                Team::new(self.name.clone(), lineup.clone(), staff.clone()).expect("valid team")
+            .take(order.len().saturating_sub(1))
+            .enumerate()
+            .max_by(|a, b| {
+                self.pitchers[*a.1]
+                    .1
+                    .total_cmp(&self.pitchers[*b.1].1)
+                    .then(b.0.cmp(&a.0))
+            })
+            .map_or(0, |(i, _)| i as u8 + 1);
+        let manager: Arc<dyn ManagerMaker> = Arc::new(UsageMaker {
+            limit: starter_limit,
+            relief: self.usage.reliever_pitches,
+            rules: Arc::clone(&self.rules),
+            setup,
+            inner,
+        });
+        let bullpen: Vec<SimPlayer> = order.iter().map(|&i| self.pitchers[i].0.clone()).collect();
+        let rotation: Vec<Team> = (0..rot)
+            .map(|s| {
+                let mut staff = vec![self.pitchers[s].0.clone()];
+                staff.extend(bullpen.iter().cloned());
+                Team::new(self.name.clone(), lineup.clone(), staff).expect("valid team")
             })
             .collect();
         (
             Club {
                 name: self.name.clone(),
                 rotation,
-                manager: self.manager.clone(),
+                manager: Some(manager),
             },
             ids,
+            order,
         )
     }
 
     /// The regulars' club (playoffs and single-game replays).
     pub(crate) fn regulars(&self) -> Club {
         self.club_on(None).0
+    }
+}
+
+/// The field manager's rule layer, over the table manager or the engine's
+/// built-in rules. At every decision point the club's relief rules are
+/// checked in order and the first that fires decides; otherwise the table
+/// manager (if the club uses tables) decides, or else the era's pitch limits
+/// and then the engine's own rules.
+#[derive(Debug)]
+struct UsageMaker {
+    limit: u16,
+    relief: u16,
+    rules: Arc<[ReliefRule]>,
+    /// Game pitcher index of the set-up man (0: none).
+    setup: u8,
+    inner: Option<Arc<dyn ManagerMaker>>,
+}
+
+impl ManagerMaker for UsageMaker {
+    fn make(&self, slot: usize) -> Box<dyn Manager> {
+        Box::new(UsageManager {
+            limit: self.limit,
+            relief: self.relief,
+            rules: Arc::clone(&self.rules),
+            setup: self.setup,
+            inner: self.inner.as_ref().map(|m| m.make(slot)),
+        })
+    }
+}
+
+struct UsageManager {
+    limit: u16,
+    relief: u16,
+    rules: Arc<[ReliefRule]>,
+    setup: u8,
+    inner: Option<Box<dyn Manager>>,
+}
+
+impl UsageManager {
+    /// The first rule that fires, as a call (`None`: no rule fired, or the
+    /// pitcher it names is not available).
+    fn rule_call(&self, v: &GameView, half_start: bool) -> Option<ReliefCall> {
+        if v.pitchers < 2 {
+            return None;
+        }
+        let closer = v.pitchers - 1;
+        let role = if v.pitcher == 0 {
+            PitcherRole::Starter
+        } else if v.pitcher == closer {
+            PitcherRole::Closer
+        } else {
+            PitcherRole::Reliever
+        };
+        let lead = -v.bat_lead();
+        let fresh = |i: u8| i > 0 && i < v.pitchers && i != v.pitcher && !v.used[usize::from(i)];
+        for r in self.rules.iter() {
+            let fires = (r.role == PitcherRole::Any || r.role == role)
+                && (r.innings.0..=r.innings.1).contains(&v.inning)
+                && (i32::from(r.lead.0)..=i32::from(r.lead.1)).contains(&lead)
+                && v.pitches_in_outing >= r.min_pitches
+                && v.runs_in_outing >= r.min_runs
+                && (half_start || !r.inning_start);
+            if !fires {
+                continue;
+            }
+            let pick = match r.then {
+                ReliefAction::Keep => return Some(ReliefCall::Keep),
+                ReliefAction::Closer => Some(closer),
+                ReliefAction::SetupMan => Some(self.setup),
+                ReliefAction::NextReliever => (1..closer).find(|&i| fresh(i)),
+            };
+            if let Some(i) = pick.filter(|&i| fresh(i)) {
+                return Some(ReliefCall::Bring(i));
+            }
+        }
+        None
+    }
+}
+
+impl Manager for UsageManager {
+    fn steal(&mut self, v: &GameView, from: u8) -> StealCall {
+        self.inner
+            .as_mut()
+            .map_or(StealCall::Default, |m| m.steal(v, from))
+    }
+
+    fn relief(&mut self, v: &GameView, half_start: bool) -> ReliefCall {
+        if let Some(call) = self.rule_call(v, half_start) {
+            return call;
+        }
+        if let Some(m) = self.inner.as_mut() {
+            return m.relief(v, half_start);
+        }
+        let closer = v.pitchers.saturating_sub(1);
+        let limit = match (v.pitcher == 0, half_start) {
+            (true, true) => self.limit,
+            (true, false) => self.limit + 15,
+            (false, true) => self.relief,
+            (false, false) => return ReliefCall::Default,
+        };
+        if v.pitchers < 3 || v.pitcher == closer || v.pitches_in_outing < limit {
+            return ReliefCall::Default;
+        }
+        // The next fresh reliever in the bullpen order (never the closer).
+        (1..closer)
+            .find(|&i| !v.used[usize::from(i)])
+            .map_or(ReliefCall::Default, ReliefCall::Bring)
+    }
+
+    fn observe(&mut self, v: &GameView) {
+        if let Some(m) = self.inner.as_mut() {
+            m.observe(v);
+        }
+    }
+
+    fn game_over(&mut self, runs: [u16; 2]) {
+        if let Some(m) = self.inner.as_mut() {
+            m.game_over(runs);
+        }
     }
 }
 
@@ -114,14 +320,50 @@ pub(crate) fn season_days(w: &World) -> usize {
         .len()
 }
 
-/// The healthiest, best nine batters and eleven pitchers a club can field.
-/// `out` is the in-season injury list (absent means healthy); `None` takes
-/// each player's own injury, for the playoffs.
+/// Keep `keep` of `list` (best first): all but the last `slots` places are
+/// fixed; those places go in turn, by segment, to the next `pool` players
+/// (the arms and bats shuttled between the majors and Triple-A).
+fn shuttle(
+    list: Vec<(PlayerId, f64)>,
+    keep: usize,
+    slots: usize,
+    pool: usize,
+    seg: Option<usize>,
+) -> Vec<(PlayerId, f64)> {
+    let fixed = keep.saturating_sub(slots);
+    let pool = pool.min(list.len().saturating_sub(fixed));
+    let Some(seg) = seg.filter(|_| slots > 0 && pool > slots) else {
+        return list.into_iter().take(keep).collect();
+    };
+    let mut out: Vec<(PlayerId, f64)> = list[..fixed].to_vec();
+    for j in 0..slots {
+        out.push(list[fixed + (seg * slots + j) % pool]);
+    }
+    out
+}
+
+/// Last segments of the season (about September), when rosters expand.
+const SEPTEMBER: usize = 4;
+
+/// The healthiest, best batters and pitchers a club can field: nine
+/// regulars and the bench, five starters and the bullpen. `out` is the
+/// in-season injury list (absent means healthy); `None` takes each player's
+/// own injury, for the playoffs. `seg` is the segment of the regular season
+/// (`None` for the playoffs): it turns the shuttle and expands rosters in
+/// September.
 pub(crate) fn build_active(
     w: &World,
     team: usize,
     out: Option<&BTreeMap<PlayerId, u16>>,
+    seg: Option<usize>,
 ) -> Active {
+    let u = w.usage_of(team).clone();
+    let september = seg.is_some_and(|s| s + SEPTEMBER >= SEGMENTS);
+    let extra = if september {
+        usize::from(u.september_extra)
+    } else {
+        0
+    };
     let state = &w.clubs[team];
     let pick = |kind: Kind, need: usize| -> Vec<(PlayerId, f64)> {
         let mut healthy: Vec<(Level, PlayerId, f64)> = Vec::new();
@@ -162,25 +404,38 @@ pub(crate) fn build_active(
     };
     // The regulars are the best nine by level then quality; the bench is the
     // next healthy batters. Each group is then ordered by quality.
-    let mut picked = pick(Kind::Batter, LINEUP + BENCH);
+    let bench_size = BENCH + extra;
+    let bat_slots = usize::from(u.batter_shuttle);
+    let mut picked = shuttle(
+        pick(Kind::Batter, LINEUP + bench_size + 2 * bat_slots),
+        LINEUP + bench_size,
+        bat_slots,
+        3 * bat_slots,
+        seg,
+    );
     let bench_at = LINEUP.min(picked.len());
     let mut bench = picked.split_off(bench_at);
     let mut bats = picked;
     desc(&mut bats);
     desc(&mut bench);
     bats.extend(bench);
-    let mut pit = pick(Kind::Pitcher, ROTATION + BULLPEN);
+    let bullpen = (usize::from(u.bullpen) + extra).clamp(1, MAX_PITCHERS - 1);
+    let pit_slots = usize::from(u.pitcher_shuttle);
+    let mut pit = shuttle(
+        pick(Kind::Pitcher, ROTATION + bullpen + 2 * pit_slots),
+        ROTATION + bullpen,
+        pit_slots,
+        3 * pit_slots,
+        seg,
+    );
     desc(&mut pit);
-    let (rot, pen) = pit.split_at(ROTATION.min(pit.len()));
+    let rotation = ROTATION.min(pit.len());
+    let (rot, pen) = pit.split_at(rotation);
     let mut pen: Vec<(PlayerId, f64)> = pen.to_vec();
     pen.reverse(); // best last: the closer
-    let manager: Option<Arc<dyn ManagerMaker>> = match state.tactics {
+    let tables = match state.tactics {
         Tactics::Baseline => None,
-        Tactics::Tables => Some(Arc::new(TableManagerMaker::new(
-            Arc::clone(tables(w)),
-            pen.iter().map(|b| b.1).collect(),
-            Arc::clone(&w.logs[team]),
-        ))),
+        Tactics::Tables => Some((Arc::clone(tables(w)), Arc::clone(&w.logs[team]))),
     };
     let sim = |id: PlayerId| -> SimPlayer {
         let p = &w.players[&id];
@@ -189,28 +444,24 @@ pub(crate) fn build_active(
             rates: w.model.rates(p.kind, &p.z),
         }
     };
-    let bullpen: Vec<SimPlayer> = pen.iter().map(|b| sim(b.0)).collect();
-    let staffs: Vec<Vec<SimPlayer>> = rot
-        .iter()
-        .map(|s| {
-            let mut pitchers = vec![sim(s.0)];
-            pitchers.extend(bullpen.iter().cloned());
-            pitchers
-        })
-        .collect();
-    let mut staff: Vec<PlayerId> = rot.iter().map(|s| s.0).collect();
-    staff.extend(pen.iter().map(|b| b.0));
+    let staff: Vec<(PlayerId, f64)> = rot.iter().chain(pen.iter()).copied().collect();
     Active {
         bats: bats.iter().map(|b| b.0).collect(),
-        staff,
+        staff: staff.iter().map(|s| s.0).collect(),
         name: state.name.clone(),
-        manager,
+        rules: u.relief_rules.clone().into(),
+        usage: u,
+        tables,
         batters: bats.iter().map(|b| (b.0, sim(b.0))).collect(),
-        staffs,
+        pitchers: staff.iter().map(|s| (sim(s.0), s.1)).collect(),
+        rotation,
     }
 }
 
-fn injury_roll(w: &World, seg: usize, p: &Player) -> Option<(u16, f64)> {
+/// Whether `p` gets hurt in segment `seg`, which is `frac` of the season:
+/// games out and permanent damage. Serious injuries strike at the same rate
+/// in every era; short injured-list stints come on top at the era's rate.
+fn injury_roll(w: &World, seg: usize, frac: f64, p: &Player) -> Option<(u16, f64)> {
     let mut rng = stream(
         w.seed,
         tag::INJURY,
@@ -218,13 +469,22 @@ fn injury_roll(w: &World, seg: usize, p: &Player) -> Option<(u16, f64)> {
         (seg as u64) << 32 | u64::from(p.id.0),
     );
     let age = f64::from(p.age(w.year));
+    // Per season (the rates were first set per sixth of a season).
     let base = match p.kind {
-        Kind::Batter => 0.045,
-        Kind::Pitcher => 0.06,
+        Kind::Batter => 0.27,
+        Kind::Pitcher => 0.36,
     };
-    let hazard = base * (1.0 + 0.04 * (age - 28.0).max(0.0));
-    if uniform(&mut rng) >= hazard {
+    let aged = 1.0 + 0.04 * (age - 28.0).max(0.0);
+    let hazard = base * frac * aged;
+    let short = w.usage.short_stints.max(0.0) * frac * aged;
+    let roll = uniform(&mut rng);
+    if roll >= hazard + short {
         return None;
+    }
+    if roll >= hazard {
+        // A short stint: the 10-day list and a little more.
+        let games = libm::exp(libm::log(14.0) + 0.4 * normal(&mut rng));
+        return Some((games.round().clamp(7.0, 40.0) as u16, 0.0));
     }
     let mut games = libm::exp(libm::log(20.0) + 1.0 * normal(&mut rng));
     if uniform(&mut rng) < 0.06 {
@@ -324,14 +584,14 @@ fn play_range(
     seg_end: bool,
 ) -> Event {
     let actives: Vec<Active> = (0..TEAMS)
-        .map(|t| build_active(w, t, Some(&st.out)))
+        .map(|t| build_active(w, t, Some(&st.out), Some(seg)))
         .collect();
     let mut bat: BTreeMap<PlayerId, BatTotals> = BTreeMap::new();
-    let mut pit = vec![vec![PitchTotals::default(); ROTATION + BULLPEN]; TEAMS];
+    let mut pit: BTreeMap<PlayerId, PitchTotals> = BTreeMap::new();
     let mut results = Vec::new();
     for (offset, day) in schedule.days[from..to].iter().enumerate() {
         // Lineups are chosen per day (rest days), so the clubs are too.
-        let built: Vec<(Club, Vec<PlayerId>)> = actives
+        let built: Vec<(Club, Vec<PlayerId>, Vec<usize>)> = actives
             .iter()
             .map(|a| a.club_on(Some(from + offset)))
             .collect();
@@ -358,26 +618,33 @@ fn play_range(
                 }
                 for (i, line) in o.pitch[side].iter().enumerate() {
                     if line.used {
-                        let staff = clubs[t].staff_index(starters[side], i);
-                        pit[t][staff].add(line);
+                        // Index 0 is the day's starter, then the bullpen in
+                        // the day's order.
+                        let staff = if i == 0 {
+                            starters[side]
+                        } else {
+                            built[t].2[i - 1]
+                        };
+                        pit.entry(actives[t].staff[staff]).or_default().add(line);
                     }
                 }
             }
         }
     }
     let mut lines: BTreeMap<PlayerId, Line> = BTreeMap::new();
-    for (t, a) in actives.iter().enumerate() {
+    for a in &actives {
         // Every batter on the active list gets a line, even with no playing time.
         for id in &a.bats {
             let totals = bat.remove(id).unwrap_or_default();
             lines.insert(*id, Line::Bat(totals));
         }
-        for (i, id) in a.staff.iter().enumerate() {
+        for id in &a.staff {
             if let Line::Pitch(p) = lines
                 .entry(*id)
                 .or_insert(Line::Pitch(PitchTotals::default()))
+                && let Some(t) = pit.get(id)
             {
-                p.merge(&pit[t][i]);
+                p.merge(t);
             }
         }
     }
@@ -385,6 +652,7 @@ fn play_range(
         // Time passes; then this segment's injuries strike.
         let days = (schedule.days.len() * (seg + 1) / SEGMENTS
             - schedule.days.len() * seg / SEGMENTS) as u16;
+        let frac = f64::from(days) / schedule.days.len().max(1) as f64;
         let mut out = st.out.clone();
         for v in out.values_mut() {
             *v = v.saturating_sub(days);
@@ -395,7 +663,7 @@ fn play_range(
             if out.get(&p.id).copied().unwrap_or(0) > 0 {
                 return;
             }
-            if let Some((games, l)) = injury_roll(w, seg, p) {
+            if let Some((games, l)) = injury_roll(w, seg, frac, p) {
                 out.insert(p.id, games);
                 hurt.push(p.id);
                 if l > 0.0 {
@@ -519,7 +787,9 @@ pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
     let nd = schedule.days.len();
     let seg = segment_of(usize::from(r.day), nd);
     let out = st.seg_starts.get(seg)?;
-    let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, Some(out))).collect();
+    let actives: Vec<Active> = (0..TEAMS)
+        .map(|t| build_active(w, t, Some(out), Some(seg)))
+        .collect();
     // The same day's lineups that `play_range` used for this game.
     let owned: Vec<Club> = actives
         .iter()
@@ -543,6 +813,74 @@ pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
 /// Clubs as they stand (injured players excluded), for the playoffs.
 pub(crate) fn playoff_clubs(w: &World) -> Vec<Club> {
     (0..TEAMS)
-        .map(|t| build_active(w, t, None).regulars())
+        .map(|t| build_active(w, t, None, None).regulars())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The home side fields in the top of `inning` with a lead of `lead`;
+    /// `pitcher` is in with `pitches` thrown this outing.
+    fn view(inning: u8, lead: i32, pitcher: u8, pitches: u16) -> GameView {
+        let mut used = [false; MAX_PITCHERS];
+        used[usize::from(pitcher)] = true;
+        GameView {
+            inning,
+            bat: 0,
+            outs: 0,
+            bases: [false; 3],
+            runs: [10, (10 + lead) as u16],
+            pitcher,
+            pitchers: 9,
+            pitches_in_outing: pitches,
+            runs_in_outing: 0,
+            used,
+        }
+    }
+
+    fn manager(usage: &Usage) -> UsageManager {
+        UsageManager {
+            limit: usage.starter_pitches,
+            relief: usage.reliever_pitches,
+            rules: usage.relief_rules.clone().into(),
+            setup: 7,
+            inner: None,
+        }
+    }
+
+    #[test]
+    fn the_role_preset_brings_the_set_up_man_and_the_closer() {
+        let mut m = manager(&Usage::roles());
+        assert_eq!(m.relief(&view(8, 2, 0, 80), true), ReliefCall::Bring(7));
+        assert_eq!(m.relief(&view(9, 3, 7, 15), true), ReliefCall::Bring(8));
+        // Not a save spot, and the starter is below his limit.
+        assert_eq!(m.relief(&view(9, 5, 0, 80), true), ReliefCall::Default);
+        // These rules wait for the start of an inning.
+        assert_eq!(m.relief(&view(8, 2, 0, 80), false), ReliefCall::Default);
+    }
+
+    #[test]
+    fn pitch_limits_lift_starters_and_relievers_and_a_keep_rule_wins() {
+        let mut m = manager(&Usage::MODERN);
+        assert_eq!(m.relief(&view(6, 0, 0, 89), true), ReliefCall::Default);
+        assert_eq!(m.relief(&view(6, 0, 0, 90), true), ReliefCall::Bring(1));
+        assert_eq!(m.relief(&view(7, 0, 2, 12), true), ReliefCall::Bring(1));
+        let keep = ReliefRule {
+            role: PitcherRole::Starter,
+            innings: (1, 30),
+            lead: (-30, 30),
+            min_pitches: 0,
+            min_runs: 0,
+            inning_start: false,
+            then: ReliefAction::Keep,
+        };
+        let usage = Usage {
+            relief_rules: vec![keep],
+            ..Usage::MODERN
+        };
+        let mut m = manager(&usage);
+        assert_eq!(m.relief(&view(6, 0, 0, 120), true), ReliefCall::Keep);
+    }
 }

@@ -6,7 +6,7 @@ use season::{Record, Series};
 use thiserror::Error;
 
 use crate::player::{Contract, Level, Player, PlayerId};
-use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules, Stance, Tactics};
+use crate::state::{ClubState, Finance, LeagueLine, Phase, Rules, Stance, Tactics, Usage};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Command {
@@ -88,6 +88,12 @@ pub enum Command {
         team: u8,
         tactics: Tactics,
     },
+    /// The club's playing-time setup (platoons, bullpen, pitch limits and
+    /// relief rules); `None` goes back to the league's customs.
+    SetUsage {
+        team: u8,
+        usage: Option<Usage>,
+    },
 }
 
 impl Command {
@@ -116,7 +122,7 @@ impl Command {
             | Command::SetLevel { .. }
             | Command::ProposeTrade { .. }
             | Command::RespondTrade { .. } => Role::Gm,
-            Command::SetTactics { .. } => Role::FieldManager,
+            Command::SetTactics { .. } | Command::SetUsage { .. } => Role::FieldManager,
         }
     }
 
@@ -135,7 +141,8 @@ impl Command {
             | Command::SetLevel { team, .. }
             | Command::ProposeTrade { team, .. }
             | Command::RespondTrade { team, .. }
-            | Command::SetTactics { team, .. } => Some(*team),
+            | Command::SetTactics { team, .. }
+            | Command::SetUsage { team, .. } => Some(*team),
             _ => None,
         }
     }
@@ -330,6 +337,10 @@ pub enum Event {
     TacticsSet {
         team: u8,
         tactics: Tactics,
+    },
+    UsageSet {
+        team: u8,
+        usage: Option<Usage>,
     },
 }
 

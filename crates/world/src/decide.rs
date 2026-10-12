@@ -23,6 +23,12 @@ const YEAR_ZERO: i32 = 2030;
 const ERA_PULL: f64 = 0.5;
 const AMATEURS: usize = 600;
 const INTERNATIONALS: usize = 200;
+/// Amateurs below the top of the class: the large pool real late rounds and
+/// undrafted signings come from. Their talent is drawn this many quality sds
+/// further below the major-league average than the top amateurs', so the top
+/// of the class is hardly changed while late picks have real upside.
+const DEPTH: usize = 1500;
+const DEPTH_OFFSET: f64 = 0.4;
 /// International signings use a flat slot (millions).
 const INTERNATIONAL_SLOT: f64 = 1.0;
 
@@ -72,6 +78,7 @@ impl World {
             next_offer: 0,
             era: [[0.0; crate::rating::K]; 2],
             rules_set: None,
+            usage: crate::state::Usage::default(),
             season: None,
             model,
             env: sim_core::Env::new(params).expect("valid parameters"),
@@ -410,6 +417,21 @@ impl World {
                     tactics: *tactics,
                 }])
             }
+            Command::SetUsage { team, usage } => {
+                self.check_team(*team)?;
+                if self.phase == Phase::Unfounded {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                if usage.as_ref().is_some_and(|u| !u.is_valid()) {
+                    return Err(WorldError::Invalid(
+                        "playing-time setup is outside its limits".into(),
+                    ));
+                }
+                Ok(vec![Event::UsageSet {
+                    team: *team,
+                    usage: usage.clone(),
+                }])
+            }
             Command::DraftPlayer { team, player } => {
                 self.need(Phase::Drafting)?;
                 self.check_team(*team)?;
@@ -705,14 +727,25 @@ impl World {
         let year = self.year;
         let mut rng = stream(self.seed, tag::DRAFT_CLASS, year as u64, 0);
         let mut next = self.next_player;
-        let mut prospects = Vec::with_capacity(AMATEURS + INTERNATIONALS);
-        for i in 0..AMATEURS + INTERNATIONALS {
-            let origin = if i >= AMATEURS {
+        let mut prospects = Vec::with_capacity(AMATEURS + INTERNATIONALS + DEPTH);
+        let depth_pool = Pool {
+            offset: self.pool.offset + DEPTH_OFFSET,
+            offset_pitcher: self.pool.offset_pitcher + DEPTH_OFFSET,
+            ..self.pool
+        };
+        for i in 0..AMATEURS + INTERNATIONALS + DEPTH {
+            let international = (AMATEURS..AMATEURS + INTERNATIONALS).contains(&i);
+            let origin = if international {
                 Origin::International
             } else if uniform(&mut rng) < 0.5 {
                 Origin::HighSchool
             } else {
                 Origin::College
+            };
+            let pool = if i >= AMATEURS + INTERNATIONALS {
+                depth_pool
+            } else {
+                self.pool
             };
             prospects.push(prospect(
                 &self.model,
@@ -720,7 +753,7 @@ impl World {
                 PlayerId(next),
                 year,
                 origin,
-                self.pool,
+                pool,
                 &self.era,
             ));
             next += 1;
@@ -780,6 +813,7 @@ impl World {
                     revenue_prev: expected,
                     spent: 0.0,
                     hype: 1.0,
+                    usage: None,
                     win_pct_prev: 0.5,
                     players: Default::default(),
                     tactics: Default::default(),

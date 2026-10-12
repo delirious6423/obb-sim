@@ -177,6 +177,14 @@ impl World {
                     return Err(WorldError::UnknownClub(*team));
                 }
             }
+            Event::UsageSet { team, usage } => {
+                if !club_ok(*team) {
+                    return Err(WorldError::UnknownClub(*team));
+                }
+                if usage.as_ref().is_some_and(|u| !u.is_valid()) {
+                    return invalid("playing-time setup is outside its limits");
+                }
+            }
             Event::TradeProposed { from, to, .. } => {
                 if !club_ok(*from) || !club_ok(*to) {
                     return invalid("trade names an unknown club");
@@ -514,6 +522,13 @@ impl World {
                     return Err(WorldError::Phase(self.phase));
                 }
                 self.club_mut(*team)?.tactics = *tactics;
+                Ok(())
+            }
+            Event::UsageSet { team, usage } => {
+                if self.phase == Phase::Unfounded {
+                    return Err(WorldError::Phase(self.phase));
+                }
+                self.club_mut(*team)?.usage = usage.clone();
                 Ok(())
             }
             Event::PlayersProgressed { year, updates, era } => {

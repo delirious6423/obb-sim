@@ -58,7 +58,7 @@ impl Level {
             Level::Majors => 13,
             Level::Triple => 11,
             Level::Double => 11,
-            Level::Single => 14,
+            Level::Single => 30,
         }
     }
 }

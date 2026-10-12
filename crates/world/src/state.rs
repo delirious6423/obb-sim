@@ -18,10 +18,10 @@ pub const MAJORS_PER_KIND: usize = 13;
 pub const MIN_SALARY: f64 = 0.75;
 pub const MINOR_COST: f64 = 0.06;
 /// Players of one kind a club may hold when the season starts, all levels.
-pub const ROSTER_PER_KIND: usize = 49;
+pub const ROSTER_PER_KIND: usize = 65;
 /// Hard limit of one kind on a club at any time (the offseason runs over
 /// the season limit until the GM sets levels).
-pub const ROSTER_MAX_PER_KIND: usize = 60;
+pub const ROSTER_MAX_PER_KIND: usize = 76;
 /// How far below zero a club's cash may be pushed by discretionary spending
 /// (bonuses, paying off released contracts).
 pub const CREDIT: f64 = 25.0;
@@ -206,7 +206,7 @@ impl Default for Rules {
             payroll_cap: 240.0,
             revenue_sharing: 0.12,
             war_price: 4.4,
-            draft_rounds: 10,
+            draft_rounds: 20,
             international_rounds: 5,
         }
     }
@@ -301,6 +301,182 @@ pub enum Tactics {
     Tables,
 }
 
+/// Which pitcher a relief rule applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PitcherRole {
+    Starter,
+    /// Any reliever but the closer.
+    Reliever,
+    Closer,
+    Any,
+}
+
+/// What a relief rule does when it fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ReliefAction {
+    /// Leave the pitcher in (no later rule or limit is asked).
+    Keep,
+    /// The next fresh reliever in today's bullpen order.
+    NextReliever,
+    /// The set-up man (the second-best reliever), if fresh.
+    SetupMan,
+    /// The closer (the best reliever), if fresh.
+    Closer,
+}
+
+/// One field-manager rule: if every condition holds, then the action.
+/// Conditions are plain ranges, so checking a rule allocates nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReliefRule {
+    pub role: PitcherRole,
+    /// Innings (inclusive).
+    pub innings: (u8, u8),
+    /// The fielding side's lead (inclusive; negative is behind).
+    pub lead: (i8, i8),
+    /// At least this many pitches in the current outing.
+    pub min_pitches: u16,
+    /// At least this many runs allowed in the current outing.
+    pub min_runs: u8,
+    /// Only at the start of a half-inning (otherwise also between batters).
+    pub inning_start: bool,
+    pub then: ReliefAction,
+}
+
+/// Most relief rules a club may set.
+pub const MAX_RELIEF_RULES: usize = 32;
+
+/// How a club spreads playing time. The league's customs are the default
+/// for every club (the automatic setup); a field manager may set his own.
+/// Relief rules are checked first, in order (the first that fires decides);
+/// then the pitch limits; then the engine's own rules (the closer in a save
+/// spot).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Usage {
+    /// Lineup slots a club shares between a regular and a platoon partner.
+    pub platoon_slots: u8,
+    /// Share of games the platoon partner starts (the games against
+    /// opposite-handed starters; handedness itself is not modelled).
+    pub platoon_share: f64,
+    /// Pitch count at which a starter is lifted at the start of an inning
+    /// (and this plus 15 within an inning).
+    pub starter_pitches: u16,
+    /// Relievers on the active staff (the rest of the 13 pitchers start).
+    pub bullpen: u8,
+    /// Short injured-list stints per player-season, on top of the serious
+    /// injuries every era has. League-wide only: a club's own setting is
+    /// ignored (clubs do not choose how often players get hurt).
+    pub short_stints: f64,
+    /// Pitches after which a reliever is lifted at the start of an inning.
+    pub reliever_pitches: u16,
+    /// Bullpen places that change hands each week among the last relievers
+    /// and the best Triple-A arms (options and call-ups).
+    pub pitcher_shuttle: u8,
+    /// The same for bench places.
+    pub batter_shuttle: u8,
+    /// Extra active players of each kind in September.
+    pub september_extra: u8,
+    /// The field manager's own relief rules.
+    #[serde(default)]
+    pub relief_rules: Vec<ReliefRule>,
+}
+
+impl Usage {
+    /// 2015-2019 usage, the automatic setup (the default).
+    pub const MODERN: Usage = Usage {
+        platoon_slots: 3,
+        platoon_share: 0.3,
+        starter_pitches: 90,
+        bullpen: 8,
+        short_stints: 0.45,
+        reliever_pitches: 12,
+        pitcher_shuttle: 2,
+        batter_shuttle: 1,
+        september_extra: 1,
+        relief_rules: Vec::new(),
+    };
+    /// 1980s usage: fewer platoons, starters go deeper, a smaller bullpen,
+    /// fewer short stints on the disabled list.
+    pub const CLASSIC: Usage = Usage {
+        platoon_slots: 1,
+        platoon_share: 0.3,
+        starter_pitches: 110,
+        bullpen: 6,
+        short_stints: 0.2,
+        reliever_pitches: 30,
+        pitcher_shuttle: 1,
+        batter_shuttle: 0,
+        september_extra: 3,
+        relief_rules: Vec::new(),
+    };
+    /// The behaviour before playing-time customs existed: a fixed lineup
+    /// with rest days, a six-man bullpen, the engine's own pitch limits.
+    pub const LEGACY: Usage = Usage {
+        platoon_slots: 0,
+        platoon_share: 0.0,
+        starter_pitches: 100,
+        bullpen: 6,
+        short_stints: 0.0,
+        reliever_pitches: 30,
+        pitcher_shuttle: 0,
+        batter_shuttle: 0,
+        september_extra: 0,
+        relief_rules: Vec::new(),
+    };
+
+    /// The classic role preset: five starters worked deep, a set-up man for
+    /// the eighth and a closer for the ninth with a lead of one to three
+    /// runs. Built on the same rule engine as any custom setup.
+    #[must_use]
+    pub fn roles() -> Usage {
+        let save = ReliefRule {
+            role: PitcherRole::Any,
+            innings: (9, 30),
+            lead: (1, 3),
+            min_pitches: 0,
+            min_runs: 0,
+            inning_start: true,
+            then: ReliefAction::Closer,
+        };
+        let setup = ReliefRule {
+            innings: (8, 8),
+            then: ReliefAction::SetupMan,
+            ..save
+        };
+        Usage {
+            relief_rules: vec![save, setup],
+            ..Usage::CLASSIC
+        }
+    }
+
+    /// Whether the customs are inside sensible limits (loaded data is not
+    /// trusted).
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.platoon_share.is_finite()
+            && (0.0..=1.0).contains(&self.platoon_share)
+            && usize::from(self.platoon_slots) <= 4
+            && (40..=200).contains(&self.starter_pitches)
+            && (1..=8).contains(&self.bullpen)
+            && self.short_stints.is_finite()
+            && (0.0..=2.0).contains(&self.short_stints)
+            && (5..=100).contains(&self.reliever_pitches)
+            && self.pitcher_shuttle <= 4
+            && self.batter_shuttle <= 4
+            && usize::from(self.bullpen) + usize::from(self.september_extra) < 12
+            && self.relief_rules.len() <= MAX_RELIEF_RULES
+            && self
+                .relief_rules
+                .iter()
+                .all(|r| r.innings.0 <= r.innings.1 && r.lead.0 <= r.lead.1)
+    }
+}
+
+impl Default for Usage {
+    fn default() -> Self {
+        Self::MODERN
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClubState {
     pub name: String,
@@ -316,6 +492,10 @@ pub struct ClubState {
     pub win_pct_prev: f64,
     pub players: BTreeSet<PlayerId>,
     pub tactics: Tactics,
+    /// The field manager's own playing-time setup; `None` uses the league's
+    /// customs (the automatic setup).
+    #[serde(default)]
+    pub usage: Option<Usage>,
     #[serde(default)]
     pub stadium: Stadium,
     #[serde(default)]
@@ -421,6 +601,8 @@ pub struct World {
     /// The year the commissioner last changed the rules; rules change at most
     /// once a year, so the rate limit cannot be dodged by repeating a change.
     pub rules_set: Option<i32>,
+    /// How clubs spread playing time (an era's customs).
+    pub usage: Usage,
     /// The regular season so far, while it is being played.
     pub season: Option<InSeason>,
     pub model: Model,
@@ -456,6 +638,7 @@ impl PartialEq for World {
             && self.next_offer == other.next_offer
             && self.era == other.era
             && self.rules_set == other.rules_set
+            && self.usage == other.usage
             && self.season == other.season
     }
 }
@@ -474,6 +657,13 @@ impl World {
             c.cash,
             self.rules.payroll_floor,
         )
+    }
+
+    /// The playing-time setup a club uses: its field manager's, or the
+    /// league's customs.
+    #[must_use]
+    pub fn usage_of(&self, team: usize) -> &Usage {
+        self.clubs[team].usage.as_ref().unwrap_or(&self.usage)
     }
 
     /// What is wrong with a club's roster for starting a season (nothing, if
@@ -557,6 +747,8 @@ pub struct Snapshot {
     pub season: Option<InSeason>,
     #[serde(default)]
     pub rules_set: Option<i32>,
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 impl World {
@@ -583,6 +775,7 @@ impl World {
             era: self.era,
             season: self.season.clone(),
             rules_set: self.rules_set,
+            usage: self.usage.clone(),
         }
     }
 
@@ -680,6 +873,13 @@ impl World {
         {
             return bad("a ballpark or the rules are outside their limits");
         }
+        if !s.usage.is_valid()
+            || s.clubs
+                .iter()
+                .any(|c| c.usage.as_ref().is_some_and(|u| !u.is_valid()))
+        {
+            return bad("playing-time customs are outside their limits");
+        }
         let finite = |x: f64| x.is_finite();
         if s.clubs
             .iter()
@@ -709,6 +909,7 @@ impl World {
         w.era = s.era;
         w.season = s.season;
         w.rules_set = s.rules_set;
+        w.usage = s.usage;
         Ok(w)
     }
 }
