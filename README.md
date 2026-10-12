@@ -44,6 +44,8 @@ CI uses it on all three systems.
 5. **Saves**: save to a named slot, quick-save, load, delete. The game also
    keeps rotating autosaves. Saves are in `~/.baseball-sim/saves`
    (set `BASEBALL_SIM_SAVES` to use another folder).
+   To move a save to another machine, export it to a `.bsave` file and
+   import that file there. See "How to move a save" in `GUIDE.md`.
 
 ## Edit the fictional data
 
