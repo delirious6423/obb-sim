@@ -3,6 +3,8 @@
 //! a club's own books and roster, the public market, and noisy scouting
 //! reports. They never read a player's true talent.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::command::Command;
@@ -361,6 +363,42 @@ pub fn set_levels(v: &GmObs) -> Vec<Command> {
     for kind in [Kind::Batter, Kind::Pitcher] {
         let mut mine: Vec<&Seen> = roster.iter().filter(|s| s.kind == kind).collect();
         mine.sort_by(|a, b| by_score_desc(a, b));
+        // The surplus goes, worst first. A release pays the rest of the
+        // contract at once, so a player the club cannot pay off without
+        // going below zero cash stays (his salary is owed either way) and
+        // the next-worst player goes instead.
+        let room: usize = [Level::Majors, Level::Triple, Level::Double, Level::Single]
+            .iter()
+            .map(|l| l.capacity())
+            .sum();
+        let surplus = mine.len().saturating_sub(room);
+        let mut cash = v.cash;
+        let mut gone = BTreeSet::new();
+        for s in mine.iter().rev() {
+            if gone.len() == surplus {
+                break;
+            }
+            if cash - s.owed >= 0.0 {
+                cash -= s.owed;
+                gone.insert(s.id);
+            }
+        }
+        if gone.len() < surplus {
+            let mut rest: Vec<&Seen> = mine
+                .iter()
+                .filter(|s| !gone.contains(&s.id))
+                .copied()
+                .collect();
+            rest.sort_by(|a, b| a.owed.total_cmp(&b.owed).then(a.id.cmp(&b.id)));
+            let short = surplus - gone.len();
+            gone.extend(rest.iter().take(short).map(|s| s.id));
+        }
+        let mut spare: Vec<&Seen> = mine
+            .iter()
+            .filter(|s| gone.contains(&s.id))
+            .copied()
+            .collect();
+        mine.retain(|s| !gone.contains(&s.id));
         let mut at = 0;
         for level in [Level::Majors, Level::Triple, Level::Double, Level::Single] {
             for s in mine.iter().skip(at).take(level.capacity()) {
@@ -374,13 +412,8 @@ pub fn set_levels(v: &GmObs) -> Vec<Command> {
             }
             at += level.capacity();
         }
-        // Release the surplus, cheapest contracts first if cash is short.
-        let mut spare: Vec<&&Seen> = mine.iter().skip(at).collect();
-        spare.sort_by(|a, b| {
-            a.owed
-                .partial_cmp(&b.owed)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Release the surplus, cheapest contracts first.
+        spare.sort_by(|a, b| a.owed.total_cmp(&b.owed));
         for s in spare {
             out.push(Command::ReleasePlayer {
                 team: v.team,
