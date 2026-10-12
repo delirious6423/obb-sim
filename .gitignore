@@ -3,6 +3,8 @@
 
 # Editor / OS
 .DS_Store
+# Claude Code agent worktrees (each is its own checkout)
+/.claude/worktrees/
 .idea/
 .vscode/
 *.swp
