@@ -171,26 +171,7 @@ impl GmAgent for ReferenceGm {
             }
             return spend_leftover(turn);
         }
-        let Some(t) = (turn.stage == GmStage::Trade)
-            .then_some(turn.obs.trade.as_ref())
-            .flatten()
-        else {
-            return BuiltInGm.act(turn);
-        };
-        t.incoming
-            .iter()
-            .map(|o| {
-                let sum = |v: &[Seen]| v.iter().map(Seen::score).sum::<f64>();
-                let fits = [Kind::Batter, Kind::Pitcher].into_iter().all(|k| {
-                    let n = |v: &[Seen]| v.iter().filter(|s| s.kind == k).count();
-                    count(turn, k) + n(&o.give) - n(&o.get) <= ROSTER_MAX_PER_KIND
-                });
-                GmAction::RespondTrade {
-                    offer: o.id,
-                    accept: fits && sum(&o.give) - sum(&o.get) > REFERENCE_TRADE_MARGIN,
-                }
-            })
-            .collect()
+        BuiltInGm.act(turn)
     }
 }
 
@@ -240,6 +221,3 @@ fn best_upgrade(t: &GmTurn, spots: usize) -> Option<GmAction> {
         years: if f.age <= 25 { f.sign_years() } else { 1 },
     })
 }
-
-/// Quality (runs per PA, summed) a trade must add before the reference agrees.
-const REFERENCE_TRADE_MARGIN: f64 = 0.001;

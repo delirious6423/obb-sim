@@ -1,32 +1,28 @@
 use connect::{GmAction, GmAgent, GmStage, GmTurn};
-use world::agents::{GmObs, Held, Seen, set_levels};
-use world::player::{Level, Origin};
+use world::agents::{GmObs, Seen, set_levels};
+use world::player::{Origin, PlayerId};
 use world::rating::Kind;
-use world::state::{CREDIT, MAJORS_PER_KIND, MIN_SALARY, ROSTER_MAX_PER_KIND, Stance};
+use world::state::{
+    CREDIT, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB, ROSTER_MAX_PER_KIND, Stance,
+};
 
 use crate::profile::{Profile, TradeMode};
+use crate::trade;
 use crate::value::{Context, Est};
 
 /// Quality gain over the thirteenth man a free agent must offer.
 const UPGRADE_MARGIN: f64 = 0.0015;
-/// Millions of apparent loss, by the market's view, the other side is
-/// assumed to put up with, plus this share of the gain the proposer claims
-/// (much of a claimed gain is the proposer's own error, which the other
-/// side's different error can flip).
-const FAIRNESS_SLACK: f64 = 2.0;
-const FAIRNESS_SHARE: f64 = 0.6;
-/// Quality (runs per PA) a trade may cost if it saves enough money.
-const GIVE_UP_QUALITY: f64 = 0.004;
-/// Quality the other side should see itself gaining, by the market's view.
-const OTHER_SIDE_STEP: f64 = 0.002;
 /// Proposals per trade turn.
-const PROPOSALS: usize = 2;
+const PROPOSALS: usize = 3;
 
 /// A general manager that values players by surplus over their contracts.
 #[derive(Debug, Clone)]
 pub struct SurplusGm {
     seed: u64,
     profile: Profile,
+    /// Offers made in this year's trade window.
+    sent: Vec<trade::Sent>,
+    sent_year: i32,
 }
 
 impl SurplusGm {
@@ -34,7 +30,12 @@ impl SurplusGm {
     /// mistakes); give each club a different one.
     #[must_use]
     pub fn new(seed: u64, profile: Profile) -> Self {
-        Self { seed, profile }
+        Self {
+            seed,
+            profile,
+            sent: Vec::new(),
+            sent_year: 0,
+        }
     }
 
     #[must_use]
@@ -150,123 +151,46 @@ impl SurplusGm {
             .collect()
     }
 
-    fn trade(&self, obs: &GmObs) -> Vec<GmAction> {
+    fn trade(&mut self, obs: &GmObs) -> Vec<GmAction> {
         let Some(t) = &obs.trade else {
             return Vec::new();
         };
-        let p = &self.profile;
+        let p = self.profile;
         if p.trades == TradeMode::Off {
             return Vec::new();
         }
-        let ctx = Context::new(obs, self.seed);
-        let value = |s: &Seen| ctx.contract_surplus(&ctx.estimate(s, p), p);
-        let margin = p.personality.trade_margin;
         let mut out = Vec::new();
-        let held = |kind: Kind| obs.roster.iter().filter(|s| s.kind == kind).count();
-        for o in &t.incoming {
-            let gain: f64 =
-                o.give.iter().map(&value).sum::<f64>() - o.get.iter().map(&value).sum::<f64>();
-            let fits = [Kind::Batter, Kind::Pitcher].into_iter().all(|k| {
-                let n = |v: &[Seen]| v.iter().filter(|s| s.kind == k).count();
-                held(k) + n(&o.give) - n(&o.get) <= ROSTER_MAX_PER_KIND
-            });
-            out.push(GmAction::RespondTrade {
-                offer: o.id,
-                accept: gain > margin && fits,
-            });
+        let mut accepted = false;
+        for (offer, accept) in trade::answers(obs, &p, self.seed) {
+            accepted |= accept;
+            out.push(GmAction::RespondTrade { offer, accept });
+        }
+        // New offers wait for a turn that starts from the roster as it is.
+        if accepted {
+            return out;
         }
         if p.trades == TradeMode::Active {
-            out.extend(self.proposals(obs, &ctx, &t.market));
-        }
-        out
-    }
-
-    fn proposals(&self, obs: &GmObs, ctx: &Context, market: &[Held]) -> Vec<GmAction> {
-        let p = &self.profile;
-        let margin = p.personality.trade_margin;
-        // What the market's consensus says, to keep offers plausible.
-        let public = Profile {
-            extra_noise: 0.0,
-            market_weight: 1.0,
-            ..*p
-        };
-        let mut mine: Vec<(f64, f64, Est)> = obs
-            .roster
-            .iter()
-            .filter(|s| s.level <= Level::Triple && s.salary > 0.0)
-            .map(|s| {
-                let e = ctx.estimate(s, p);
-                (ctx.contract_surplus(&e, p), ctx.mean_quality(&e, p), e)
-            })
-            .collect();
-        mine.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.2.seen.id.cmp(&b.2.seen.id)));
-        mine.truncate(14);
-        let mut theirs: Vec<(f64, f64, u8, Est)> = market
-            .iter()
-            .filter(|h| h.seen.salary > 0.0)
-            .map(|h| {
-                let e = ctx.estimate(&h.seen, p);
-                (
-                    ctx.contract_surplus(&e, p),
-                    ctx.mean_quality(&e, p),
-                    h.club,
-                    e,
-                )
-            })
-            .collect();
-        theirs.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.3.seen.id.cmp(&b.3.seen.id)));
-        theirs.truncate(60);
-        let mut options: Vec<(f64, u8, Est, Est)> = Vec::new();
-        for (vx, qx, x) in &mine {
-            for (vy, qy, club, y) in &theirs {
-                if x.seen.kind != y.seen.kind || *qy <= qx - GIVE_UP_QUALITY {
-                    continue;
-                }
-                let gain = vy - vx;
-                if gain <= margin {
-                    continue;
-                }
-                // The other side should not look robbed by the market's view.
-                let (ex, ey) = (
-                    ctx.estimate(&x.seen, &public),
-                    ctx.estimate(&y.seen, &public),
-                );
-                // The other side looks at quality; it should see a step up.
-                if ex.q - ey.q < OTHER_SIDE_STEP {
-                    continue;
-                }
-                let px = ctx.contract_surplus(&ex, &public);
-                let py = ctx.contract_surplus(&ey, &public);
-                if px - py < -(FAIRNESS_SLACK + FAIRNESS_SHARE * gain) {
-                    continue;
-                }
-                options.push((gain, *club, *x, *y));
+            if self.sent_year != obs.year {
+                self.sent_year = obs.year;
+                self.sent.clear();
             }
-        }
-        options.sort_by(|a, b| {
-            b.0.total_cmp(&a.0)
-                .then(a.3.seen.id.cmp(&b.3.seen.id))
-                .then(a.2.seen.id.cmp(&b.2.seen.id))
-        });
-        let (mut used_clubs, mut used_players) = (Vec::new(), Vec::new());
-        let mut out = Vec::new();
-        for (_, club, x, y) in options {
-            if used_clubs.contains(&club)
-                || used_players.contains(&x.seen.id)
-                || used_players.contains(&y.seen.id)
-            {
-                continue;
+            // No offer made twice in a window, one open offer per partner, no
+            // player in two open offers, and no more open offers than the
+            // league allows.
+            let mut used: Vec<PlayerId> = t
+                .outgoing
+                .iter()
+                .flat_map(|o| o.give.iter().chain(&o.get).copied())
+                .collect();
+            let max = PROPOSALS.min(OFFERS_PER_CLUB.saturating_sub(t.outgoing.len()));
+            let deals = trade::deals(obs, t, &p, self.seed, &self.sent);
+            let made = trade::proposals(deals, max, trade::salary_room(obs, t), &mut used);
+            for a in &made {
+                if let GmAction::ProposeTrade { partner, give, get } = a {
+                    self.sent.push((*partner, give.clone(), get.clone()));
+                }
             }
-            used_clubs.push(club);
-            used_players.extend([x.seen.id, y.seen.id]);
-            out.push(GmAction::ProposeTrade {
-                partner: club,
-                give: vec![x.seen.id],
-                get: vec![y.seen.id],
-            });
-            if out.len() >= PROPOSALS {
-                break;
-            }
+            out.extend(made);
         }
         out
     }

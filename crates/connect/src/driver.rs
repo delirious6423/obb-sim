@@ -379,4 +379,6 @@ pub fn trade_round(
     acted
 }
 
-const TRADE_ROUNDS: usize = 3;
+/// Rounds of trade talks in a window: offers, answers and new offers to
+/// other clubs after a no.
+pub const TRADE_ROUNDS: usize = 8;

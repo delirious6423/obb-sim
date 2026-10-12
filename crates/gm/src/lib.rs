@@ -9,6 +9,7 @@
 mod agent;
 pub mod bots;
 mod profile;
+pub mod trade;
 mod value;
 
 pub use agent::SurplusGm;
