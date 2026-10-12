@@ -171,6 +171,11 @@ pub struct Founding {
     pub players: Vec<Player>,
     pub free_agents: Vec<PlayerId>,
     pub next_player: u32,
+    /// The era shift the burn-in left behind (see `World::era`). Players'
+    /// talent already includes it, so the league must start from it too.
+    /// Absent in old saves: zero, as it was then.
+    #[serde(default)]
+    pub era: [crate::rating::Z; 2],
 }
 
 /// What a player did in a season, with his value above a replacement player.
