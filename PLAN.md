@@ -18,6 +18,45 @@ This file is memory. After a context reset: read this file and `CLAUDE.md`, then
 
 Otherwise decide, note it in the log, keep going. **Stop after phase 4b and summarize.** Phases 5+ (desktop UI, saves, alpha, owner and commissioner roles, online) need user decisions first.
 
+## HANDOFF (written 2026-10-12; read this first on a new day or machine)
+
+**State in one paragraph.** Phases 0-7 are built; `v0.1` is tagged. The owner ordered: fix everything wrong in the local game BEFORE any online work (Phase 8 NOT started, do not start it). We are in Phase 7b (see below). Main holds merges that were not yet on CI at the time of writing (trading overhaul, draft/stability calibration, debt rule, save export/import, known-gaps fixes); two stopped work branches hold unmerged, unverified work (see Branches). Two gates fail and need a discussion with the owner before more attempts (see Open issues).
+
+**Resume on a new machine**
+1. `git clone` the private repo (`delirious6423/baseball-sim`), `git fetch --all` (WIP branches are pushed).
+2. Ignored gates need git-ignored data: `mkdir -p data/internal && cp data/params.json data/internal/params.json` (the two files are identical).
+3. Rust stable; `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`. Long gates (release, ignored): see Gate commands.
+4. Read this section, `CLAUDE.md`, `AGENTS.md`, `OOTP_BENCHMARK.md`. Memory notes for the assistant live in `~/.claude/projects/.../memory` on the old machine only; the rules they hold are copied under Owner rules below.
+
+**Owner rules (binding; copied from the assistant's memory)**
+- Whenever in doubt about a rate/count/percentage, anchor to real MLB statistics (look them up, cite URL in PLAN.md).
+- Never change a gate threshold, golden or test to make it pass. A band may change only with a cited source and the owner's yes.
+- Reference game is OOTP 27; we build an open, faster, better one with agent-native connectors. See `OOTP_BENCHMARK.md` (gaps list).
+- Strategy is a fluid spectrum: rule/trigger-based pitcher and fielder usage; defined roles (closer, 5-man rotation, set order) stay as optional presets of the same engine; rotation size flexible (4-8 starters); default auto-management must be excellent; a person can override any single rule.
+- Debt: no bailout. In debt (cash < 0): no signing except minimum-salary roster fills, no payroll-adding trades, held to the payroll floor, no dividends. Debts are repaid by the club's own profit (roles-gate criterion: each debt spell ends within 10 seasons). No credit line.
+- All difficulties trade; difficulty changes decision quality and information, never the dice; easy AIs giving assets away is part of the game.
+- Add an inflation mechanic (league salary/price scale, like OOTP's idea) so money stays meaningful over long runs.
+- The sim and UI must not get slower (bench before/after: `cargo run --release -p cli -- bench 20`; a season ~0.13 s).
+- Flag consistently failing items early and ask for help; list owner questions in a dedicated Asks section at the end of a report.
+- Subagents: Opus for design/calibration problems; Sonnet/Haiku for mechanical work; workers must be given the full history of what was already tried; max about 3 heavy gate processes at once on one machine; iterate on 1-2 seeds, full 5-seed gates once at the end.
+
+**Branches (all private; pushed so another machine can continue)**
+- `main`: merged and tested at unit level (fmt, clippy, workspace tests green at 47c6f73 per test-runner; long gates NOT re-run on the combined state yet). Includes: known-gaps fixes; trading overhaul (`crates/gm/src/trade.rs`: packages up to 3-for-3, salary dumps, contender/rebuilder logic; 49-59 accepted trades/season, real MLB about 54); draft/stability calibration (rest days, 4-man bench, pool spread 1.0, founding era, roster-cut fix); debt rule; `.bsave` export/import (Saves screen; README/GUIDE explain); AGENTS.md/docs.
+- `worktree-agent-a4ba1b1810eb11ab0` (STOPPED, unverified): economy batch 1: commit f155ad9 'free agents at real $/WAR; revenue and costs rebalanced to MLB' plus uncommitted inflation work (check the worktree `.claude/worktrees/agent-a4ba1b1810eb11ab0` or the pushed branch).
+- `worktree-agent-a48d2592c901712db` (STOPPED, unverified): usage/fatigue/talent pipeline: commits d472b46, 431a90a, c60342b, 12a6edf, 5196ce4 (era pitch limits, playing-time customs, weekly rosters, short IL stints, deeper talent pipeline, agent control of playing-time setup, role preset, MLB usage dev aids). Draft-gate numbers were never reported.
+- Older worker branches `worktree-agent-*` (a0b8cf.., a0eb0a.., a26dc3.., a27d36.., a4a1b5.., a9aaf6.., ac0a0d.., ac66a7.., af3183..) are already merged or superseded; safe to delete after checking `git branch --merged main`.
+
+**Open issues (consistently failing; discuss with the owner before more attempts)**
+1. **Hoarder gate** `cargo test --release -p gm --test ladder exploit_bots_gain_no_lasting_edge -- --ignored --nocapture`: the hoarder bot (signs best free agent at any price up to budget) gains +0.037 win% (z 9.9) in seasons 26-50; limit is z < 2 and edge <= 0.015. FAILED 5 attempts: debt-wipe removal (ladder passes but roles gate failed), cash-to-credit-line, ticket-price pinning (worse), receivership, debt freeze (worse). Findings: debt was never the cause; the hoarder fully spends a budget the reference GM leaves ~23M short, and its extra wins earn back most of the cost. Real anchors: free agents cost about $9-10M/WAR (FanGraphs), payroll-win correlation about 0.4 in a typical year (weak in 2023); the sim's effective price is about $4.6M/win = about half. Plan was repricing (branch a4ba1b.. commit f155ad9). Open question for the owner: is 'exploit' = any lasting win edge, or an edge at net loss? (Do NOT change the definition without the owner.)
+2. **Draft gate** `cargo test --release -p world --test world_gate draft_gate -- --ignored --nocapture`: after rest days/bench/pool spread 1.0/founding era, picks 1-10 mean career WAR 13.4-14.5 (band 9.5-12.8), bust .67-.69 (band .60-.65), picks 31-90 reach .55-.57 (band .40-.51) and WAR 3.5-3.8 (band .8-3.3); 11-30 and 91-300 mostly pass. FAILED 6 attempts. Diagnosis: sourced studies observed classes 5-15 years after the draft (censored), the gate scores complete careers (in the study window picks 1-10 are 9.6-11.0 WAR); structurally the sim had no talent past pick 300 and clubs use ~28 players/year vs ~47 in MLB (top-300 draftees earn ~65% of league WAR vs ~48%). Partly addressed in branch a48d25.. Owner decision needed: (a) score in the study window, (b) build the pipeline/usage fixes, (c) both (recommended).
+3. Worker process: attempts failed partly because workers started cold; give full history. Consider shorter supervised steps.
+
+**Other known gaps and stale text** (some older text below still mentions a credit line (CREDIT 25M) and rescues; both are gone: debt rule above supersedes). Known gaps list at the bottom stays valid unless ticked. The roles/owner/commissioner screens, save export/import and the trade UI have not been played by a person.
+
+**Gate commands** (release, ignored; need data/internal/params.json): roles `cargo test --release -p connect --test roles_gate -- --ignored --nocapture`; manager `-p world --test manager_gate`; stability `-p world --test world_gate stability_gate`; draft `-p world --test world_gate draft_gate`; ladder `-p gm --test ladder -- --ignored` (ai_beats_reference, presets_rank_in_order, exploit_bots_gain_no_lasting_edge); trade `-p gm --test trade_gate`; calibration gate in `calibration` crate. Last known results: roles PASS, manager PASS (+0.0078 z 5.2), stability PASS, trade PASS, ladder ranking PASS, hoarder FAIL, draft FAIL.
+
+**Next steps after the discussion:** decide issues 1 and 2; merge or discard the two stopped branches (re-verify every gate); finish Phase 7b batches 1-4 (see Phase 7b); combined full-gate pass; independent reviewer; push; CI per job (ubuntu, macos, windows); then ask the owner to playtest; only then Phase 8.
+
 ## Phase 0: workspace (done)
 
 - [x] Six-crate workspace, CI on Linux/macOS/Windows, seeded RNG + golden tests
