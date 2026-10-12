@@ -18,6 +18,11 @@ use crate::util::{stream, tag};
 const SEGMENTS: usize = 6;
 const ROTATION: usize = 5;
 const BULLPEN: usize = 6;
+/// Healthy batters beyond the nine regulars who can play a game.
+const BENCH: usize = 4;
+/// Each regular sits about one day in this many (a rest day gives a bench
+/// player the slot). Real regulars play about 85% of their club's games.
+const REST_CYCLE: usize = 7;
 
 /// Tables for the table manager, built from average teams the first time
 /// they are needed. The result depends only on the game parameters.
@@ -48,9 +53,58 @@ fn tables(w: &World) -> &Arc<Tables> {
 }
 
 pub(crate) struct Active {
-    pub club: Club,
+    /// Everyone who can play a game: the nine regulars, then the bench.
     pub bats: Vec<PlayerId>,
     pub staff: Vec<PlayerId>,
+    name: String,
+    manager: Option<Arc<dyn ManagerMaker>>,
+    /// Batters in lineup order (regulars, then bench) with their sim ratings.
+    batters: Vec<(PlayerId, SimPlayer)>,
+    /// Per starter: the starter, then the bullpen.
+    staffs: Vec<Vec<SimPlayer>>,
+}
+
+impl Active {
+    /// The club that takes the field on `day` of the season (`None`: the
+    /// regulars, for the playoffs). On a rest day a regular sits in turn and
+    /// a bench player takes his slot in the batting order. Returns the club
+    /// and the player id for each lineup slot.
+    pub(crate) fn club_on(&self, day: Option<usize>) -> (Club, Vec<PlayerId>) {
+        let mut slots: Vec<usize> = (0..LINEUP.min(self.batters.len())).collect();
+        if let Some(day) = day {
+            let bench = self.batters.len().saturating_sub(LINEUP).min(BENCH);
+            let mut rested = 0;
+            for (s, slot) in slots.iter_mut().enumerate() {
+                if rested < bench && (day + s) % REST_CYCLE == 0 {
+                    // Rotate the bench by day so every bench player gets turns.
+                    *slot = LINEUP + (day + rested) % bench;
+                    rested += 1;
+                }
+            }
+        }
+        let lineup: Vec<SimPlayer> = slots.iter().map(|&i| self.batters[i].1.clone()).collect();
+        let ids: Vec<PlayerId> = slots.iter().map(|&i| self.batters[i].0).collect();
+        let rotation: Vec<Team> = self
+            .staffs
+            .iter()
+            .map(|staff| {
+                Team::new(self.name.clone(), lineup.clone(), staff.clone()).expect("valid team")
+            })
+            .collect();
+        (
+            Club {
+                name: self.name.clone(),
+                rotation,
+                manager: self.manager.clone(),
+            },
+            ids,
+        )
+    }
+
+    /// The regulars' club (playoffs and single-game replays).
+    pub(crate) fn regulars(&self) -> Club {
+        self.club_on(None).0
+    }
 }
 
 /// Days in this year's regular season.
@@ -106,8 +160,15 @@ pub(crate) fn build_active(
                 .then(a.0.cmp(&b.0))
         });
     };
-    let mut bats = pick(Kind::Batter, LINEUP);
+    // The regulars are the best nine by level then quality; the bench is the
+    // next healthy batters. Each group is then ordered by quality.
+    let mut picked = pick(Kind::Batter, LINEUP + BENCH);
+    let bench_at = LINEUP.min(picked.len());
+    let mut bench = picked.split_off(bench_at);
+    let mut bats = picked;
     desc(&mut bats);
+    desc(&mut bench);
+    bats.extend(bench);
     let mut pit = pick(Kind::Pitcher, ROTATION + BULLPEN);
     desc(&mut pit);
     let (rot, pen) = pit.split_at(ROTATION.min(pit.len()));
@@ -128,26 +189,24 @@ pub(crate) fn build_active(
             rates: w.model.rates(p.kind, &p.z),
         }
     };
-    let batters: Vec<SimPlayer> = bats.iter().map(|b| sim(b.0)).collect();
     let bullpen: Vec<SimPlayer> = pen.iter().map(|b| sim(b.0)).collect();
-    let rotation: Vec<Team> = rot
+    let staffs: Vec<Vec<SimPlayer>> = rot
         .iter()
         .map(|s| {
             let mut pitchers = vec![sim(s.0)];
             pitchers.extend(bullpen.iter().cloned());
-            Team::new(state.name.clone(), batters.clone(), pitchers).expect("valid team")
+            pitchers
         })
         .collect();
     let mut staff: Vec<PlayerId> = rot.iter().map(|s| s.0).collect();
     staff.extend(pen.iter().map(|b| b.0));
     Active {
-        club: Club {
-            name: state.name.clone(),
-            rotation,
-            manager,
-        },
         bats: bats.iter().map(|b| b.0).collect(),
         staff,
+        name: state.name.clone(),
+        manager,
+        batters: bats.iter().map(|b| (b.0, sim(b.0))).collect(),
+        staffs,
     }
 }
 
@@ -267,11 +326,16 @@ fn play_range(
     let actives: Vec<Active> = (0..TEAMS)
         .map(|t| build_active(w, t, Some(&st.out)))
         .collect();
-    let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
-    let mut bat = vec![[BatTotals::default(); LINEUP]; TEAMS];
+    let mut bat: BTreeMap<PlayerId, BatTotals> = BTreeMap::new();
     let mut pit = vec![vec![PitchTotals::default(); ROTATION + BULLPEN]; TEAMS];
     let mut results = Vec::new();
     for (offset, day) in schedule.days[from..to].iter().enumerate() {
+        // Lineups are chosen per day (rest days), so the clubs are too.
+        let built: Vec<(Club, Vec<PlayerId>)> = actives
+            .iter()
+            .map(|a| a.club_on(Some(from + offset)))
+            .collect();
+        let clubs: Vec<&Club> = built.iter().map(|b| &b.0).collect();
         let outcomes: Vec<GameOutcome> = day
             .par_iter()
             .map(|f| replay_game_with(&w.env, &clubs, f, w.seed, w.year as u32))
@@ -290,7 +354,7 @@ fn play_range(
             for side in 0..2 {
                 let t = ids[side];
                 for (slot, line) in o.bat[side].iter().enumerate() {
-                    bat[t][slot].add(line);
+                    bat.entry(built[t].1[slot]).or_default().add(line);
                 }
                 for (i, line) in o.pitch[side].iter().enumerate() {
                     if line.used {
@@ -303,10 +367,10 @@ fn play_range(
     }
     let mut lines: BTreeMap<PlayerId, Line> = BTreeMap::new();
     for (t, a) in actives.iter().enumerate() {
-        for (slot, id) in a.bats.iter().enumerate() {
-            if let Line::Bat(b) = lines.entry(*id).or_insert(Line::Bat(BatTotals::default())) {
-                b.merge(&bat[t][slot]);
-            }
+        // Every batter on the active list gets a line, even with no playing time.
+        for id in &a.bats {
+            let totals = bat.remove(id).unwrap_or_default();
+            lines.insert(*id, Line::Bat(totals));
         }
         for (i, id) in a.staff.iter().enumerate() {
             if let Line::Pitch(p) = lines
@@ -456,7 +520,12 @@ pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
     let seg = segment_of(usize::from(r.day), nd);
     let out = st.seg_starts.get(seg)?;
     let actives: Vec<Active> = (0..TEAMS).map(|t| build_active(w, t, Some(out))).collect();
-    let clubs: Vec<&Club> = actives.iter().map(|a| &a.club).collect();
+    // The same day's lineups that `play_range` used for this game.
+    let owned: Vec<Club> = actives
+        .iter()
+        .map(|a| a.club_on(Some(usize::from(r.day))).0)
+        .collect();
+    let clubs: Vec<&Club> = owned.iter().collect();
     let f = schedule.fixture(number)?;
     let o = replay_game_with(&w.env, &clubs, f, w.seed, w.year as u32);
     if o.runs != [r.away_runs, r.home_runs] {
@@ -473,5 +542,7 @@ pub(crate) fn box_score_text(w: &World, number: u16) -> Option<String> {
 
 /// Clubs as they stand (injured players excluded), for the playoffs.
 pub(crate) fn playoff_clubs(w: &World) -> Vec<Club> {
-    (0..TEAMS).map(|t| build_active(w, t, None).club).collect()
+    (0..TEAMS)
+        .map(|t| build_active(w, t, None).regulars())
+        .collect()
 }

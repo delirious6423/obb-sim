@@ -162,7 +162,7 @@ pub struct Pool {
 }
 
 pub const DEFAULT_POOL: Pool = Pool {
-    spread: 1.3,
+    spread: 1.0,
     offset: 2.5,
     offset_pitcher: 2.4,
 };
