@@ -31,20 +31,20 @@ fn league(seed: u64) -> (World, Seats, Vec<Event>) {
     (w, seats, log)
 }
 
+const SEED: u64 = 7;
+
 #[test]
 fn a_rescued_club_starts_the_season_with_a_roster_in_order() {
-    for seed in [7] {
-        let (mut w, mut seats, mut log) = league(seed);
-        run_year_with(&mut w, &mut seats, &mut log).expect("first year");
-        // Far below the credit line: this year's settlement rescues club 0,
-        // voiding the contracts that broke it.
-        w.clubs[0].cash = -10.0 * CREDIT;
-        run_year_with(&mut w, &mut seats, &mut log).expect("rescue year");
-        assert!(
-            w.finances[0].last().is_some_and(|f| f.rescued),
-            "seed {seed}: the test needs club 0 rescued"
-        );
-        let problems = w.roster_problems(0);
-        assert!(problems.is_empty(), "seed {seed}: {problems:?}");
-    }
+    let (mut w, mut seats, mut log) = league(SEED);
+    run_year_with(&mut w, &mut seats, &mut log).expect("first year");
+    // Far below the credit line: this year's settlement rescues club 0,
+    // voiding the contracts that broke it.
+    w.clubs[0].cash = -10.0 * CREDIT;
+    run_year_with(&mut w, &mut seats, &mut log).expect("rescue year");
+    assert!(
+        w.finances[0].last().is_some_and(|f| f.rescued),
+        "the test needs club 0 rescued"
+    );
+    let problems = w.roster_problems(0);
+    assert!(problems.is_empty(), "{problems:?}");
 }
