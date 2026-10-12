@@ -25,7 +25,7 @@ Otherwise decide, note it in the log, keep going. ~~**Stop after phase 4b and su
 **State in one paragraph.** Phases 0-7 are built; `v0.1` is tagged. The owner ordered: fix everything wrong in the local game BEFORE any online work (Phase 8 NOT started, do not start it). We are in Phase 7b (see below). Main holds merges that were not yet on CI at the time of writing (trading overhaul, draft/stability calibration, debt rule, save export/import, known-gaps fixes); two stopped work branches hold unmerged, unverified work (see Branches). Two gates fail and need a discussion with the owner before more attempts (see Open issues).
 
 **Resume on a new machine**
-1. `git clone` the private repo (`delirious6423/baseball-sim`), `git fetch --all` (WIP branches are pushed).
+1. `git clone` the repo (`delirious6423/obb-sim`), `git fetch --all` (WIP branches are pushed).
 2. Ignored gates need git-ignored data: `mkdir -p data/internal && cp data/params.json data/internal/params.json` (the two files are identical).
 3. Rust stable; `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`. Long gates (release, ignored): see Gate commands.
 4. Read this section, `CLAUDE.md`, `AGENTS.md`, `OOTP_BENCHMARK.md`. Memory notes for the assistant live in `~/.claude/projects/.../memory` on the old machine only; the rules they hold are copied under Owner rules below.
@@ -179,7 +179,7 @@ Historical: the v0.1 playtest brief, kept as written. Its numbers (trade counts,
 cargo run --release -p ui
 ```
 
-(Or `scripts/build.sh` for a checked build in `dist/`.) Saves are in `~/.baseball-sim/saves`.
+(Or `scripts/build.sh` for a checked build in `dist/`.) Saves are in `~/.obb-sim/saves` (older `~/.baseball-sim/saves` is still found).
 
 **What to try**
 1. New game: pick a club and difficulty (try Rookie, then Hall of Fame, or Custom levers). Founding takes about a second.

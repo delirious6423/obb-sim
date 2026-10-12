@@ -21,7 +21,8 @@ members = [
 version = "0.0.0"
 edition = "2024"
 publish = false
-license = "LicenseRef-Proprietary"
+license = "Apache-2.0"
+repository = "https://github.com/delirious6423/obb-sim"
 
 [workspace.dependencies]
 libm = "0.2"

@@ -17,5 +17,8 @@ exe=target/release/game
 rm -rf dist
 mkdir -p dist
 cp "$exe" dist/
-cp README.md THIRD_PARTY.md dist/
+cp README.md LICENSE NOTICE THIRD_PARTY.md dist/
+py=python3
+command -v "$py" >/dev/null || py=python
+"$py" tools/licenses.py --notices dist/THIRD_PARTY_LICENSES.txt
 echo "built: dist/$(basename "$exe")"

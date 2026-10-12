@@ -138,7 +138,7 @@ pub fn shell(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             } else {
-                ui.heading("Baseball Sim");
+                ui.heading("OBB Sim");
                 if ui
                     .selectable_label(app.screen == Screen::NewGame, "New game")
                     .clicked()

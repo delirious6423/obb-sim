@@ -41,9 +41,9 @@ club staff would.
 
 ## Saves
 
-Use the Saves screen. Save files are in `~/.baseball-sim/saves`, or in the
-folder named by the environment variable `BASEBALL_SIM_SAVES`. Each slot has
-a `.sav` file and a `.manifest.json` file. The game keeps a `.bak` copy of the
+Use the Saves screen. Save files are in `~/.obb-sim/saves` (or
+`~/.baseball-sim/saves` from before the rename), or in the folder named by the
+environment variable `OBB_SIM_SAVES`. Each slot has a `.sav` file and a `.manifest.json` file. The game keeps a `.bak` copy of the
 last good save.
 
 ## How to move a save

@@ -4,7 +4,7 @@ Every dependency and data source is logged here.
 
 ## Data
 
-### Retrosheet (internal calibration only)
+### Retrosheet (calibration data)
 
 Play-by-play event files for 2015-2019 are downloaded into `data/internal/`, which is git-ignored. Only league-wide rates and talent spread are derived from them; no player id, name or stat line is stored.
 

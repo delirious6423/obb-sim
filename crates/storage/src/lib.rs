@@ -1,4 +1,4 @@
-//! Local multi-slot save files for the baseball management game.
+//! Local multi-slot save files for obb-sim, a baseball management game.
 //!
 //! The crate knows nothing about the game. It stores opaque byte blobs (a
 //! snapshot, a command/event log tail, stored results) plus a small JSON
@@ -19,6 +19,7 @@
 
 mod bundle;
 mod db;
+mod dirs;
 mod error;
 mod local;
 mod model;
@@ -26,6 +27,7 @@ mod slot;
 mod store;
 
 pub use bundle::{BUNDLE_EXTENSION, MAX_BUNDLE_BYTES, sanitise_slot_name};
+pub use dirs::{LEGACY_SAVES_ENV, SAVES_ENV, default_saves_dir};
 pub use error::{Result, StoreError};
 pub use local::{DEFAULT_AUTO_SLOTS, LocalStore, OpenedBundle, QUICK_SLOT};
 pub use model::{Manifest, SaveData, SaveKind};

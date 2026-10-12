@@ -476,7 +476,7 @@ def finish_game(game, tot):
 
 def fetch(year):
     req = urllib.request.Request(
-        SOURCE_URL.format(year=year), headers={"User-Agent": "baseball-sim-calibration"}
+        SOURCE_URL.format(year=year), headers={"User-Agent": "obb-sim-calibration"}
     )
     with urllib.request.urlopen(req, timeout=300) as resp:
         return resp.read()

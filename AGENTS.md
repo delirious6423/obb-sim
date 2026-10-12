@@ -4,7 +4,7 @@ Shared rules for coding agents in this Rust project. The architecture rules, the
 
 ## Project
 
-- Purpose: closed-source, OOTP-style baseball management sim. Fictional players and teams only.
+- Purpose: open-source (Apache-2.0), OOTP-style baseball management sim. Fictional players and teams only.
 - Workspace: the members are listed in the root `Cargo.toml` (14 crates; `CLAUDE.md` has the crate map). The command-line binary `sim` is in `crates/cli`. The desktop binary `game` is in `crates/ui`.
 - Edition 2024, resolver 3. No `rust-version` and no `rust-toolchain.toml` are set. CI uses the stable toolchain on Linux, macOS, and Windows.
 - Async runtime: none. Global allocator: none set. Parallel code uses `rayon`.

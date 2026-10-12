@@ -83,8 +83,8 @@ const CITIES: &[&str] = &[
     "Falcon Rock",
 ];
 const MASCOTS: &[&str] = &[
-    "Gulls", "Foxes", "Herons", "Badgers", "Marlins", "Wolves", "Otters", "Rams", "Kestrels",
-    "Bison", "Lynx", "Pelicans", "Stags", "Cranes", "Mariners",
+    "Gulls", "Foxes", "Herons", "Badgers", "Ospreys", "Wolves", "Otters", "Rams", "Kestrels",
+    "Bison", "Lynx", "Pelicans", "Stags", "Cranes", "Puffins",
 ];
 
 fn make_name(draw: &mut Draw, used: &mut BTreeSet<String>) -> String {

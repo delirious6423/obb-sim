@@ -2,7 +2,7 @@
 
 @AGENTS.md
 
-Closed-source, OOTP-style baseball management sim in Rust. **Fictional players and teams only.**
+Open-source (Apache-2.0, see `LICENSE`), OOTP-style baseball management sim in Rust. **Fictional players and teams only.**
 
 ## Architecture rules (always apply)
 

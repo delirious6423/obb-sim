@@ -48,8 +48,8 @@ and unique (ignoring case) among the players whose names you change.
 Unknown ids, unknown club indexes, and changes to club, age or position
 are errors. Nothing is written when any check fails.
 
-Saves folder: --saves <dir>, else $BASEBALL_SIM_SAVES, else
-~/.baseball-sim/saves. A path ending in .sav is read from its own folder.
+Saves folder: --saves <dir>, else $OBB_SIM_SAVES, else
+~/.obb-sim/saves (or ~/.baseball-sim/saves from before the rename). A path ending in .sav is read from its own folder.
 The new slot is always written to the saves folder.";
 
 /// The club and player names of one league, as exported.
@@ -335,19 +335,13 @@ fn import_roster(
     })
 }
 
-/// The save folder: `--saves`, else `BASEBALL_SIM_SAVES`, else
-/// `~/.baseball-sim/saves`.
+/// The save folder: `--saves`, else the game's default
+/// ([`storage::default_saves_dir`]).
 fn saves_dir(flag: Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(dir) = flag {
         return Ok(dir);
     }
-    if let Some(dir) = std::env::var_os("BASEBALL_SIM_SAVES") {
-        return Ok(PathBuf::from(dir));
-    }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or("no home folder; pass --saves <dir>")?;
-    Ok(PathBuf::from(home).join(".baseball-sim").join("saves"))
+    storage::default_saves_dir().ok_or_else(|| "no home folder; pass --saves <dir>".into())
 }
 
 /// Resolves a source given as a slot name (in `saves`) or as a path to a

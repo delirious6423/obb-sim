@@ -87,9 +87,9 @@ Sections 1-5 are the historical handoff. Section 6 records the independent revie
 **Documented in the original repository on 2026-10-13; no candidate code has been applied here.** The reviewed original code remains at `af61282c05997de4dd892cfaa75686578468714c`, with WAR price 4.4 and rules version 2. All candidate results below refer to a separate local checkout, not to current main. The candidate passes the hoarder gate but still fails draft calibration and has a repeatable 11.88% offseason slowdown. **Hold the combined candidate; it is not ready to merge.**
 
 - Candidate branch: `codex/review-calibration-gates`, tip `a6e16650a764ad114fa13407dcc727e2309f5cbf`.
-- Local checkout: a separate local clone (path omitted).
+- Local checkout: a separate clone on the owner's machine (not pushed).
 - Separate commits: `b98ccb3` shared roster-release cash plus regression and rules 3; `a983bf9` price/configuration experiment; `a6e1665` review and verification documentation. The release-only commit has not had its own full gate run; final verification covers the combined candidate.
-- Report, verified patch/bundle, and logs: a separate local clone (path omitted). The report is `final-report.txt`; `baseball-sim-candidate.bundle` requires base `af61282`; `baseball-sim-review-package.zip` includes the evidence. Candidate code and these commits were not pushed; remote CI was not verified because network access was unavailable.
+- Report, verified patch/bundle, and logs: kept with that local clone (not in this repository). The report is `final-report.txt`; `baseball-sim-candidate.bundle` requires base `af61282`; `baseball-sim-review-package.zip` includes the evidence. Candidate code and these commits were not pushed; remote CI was not verified because network access was unavailable.
 - Neither draft experiment nor the large economy/inflation or usage branch was merged. Do not repeat the completed attempts below without a new, explicit hypothesis and owner decision.
 
 ### Review corrections and unresolved defects

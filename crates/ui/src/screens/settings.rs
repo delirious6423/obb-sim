@@ -28,11 +28,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.label("Smart tactics is switched on and off on the Depth chart screen.");
 }
 
-/// Where saves are written: the BASEBALL_SIM_SAVES folder if set, else the
-/// default folder in the home directory.
+/// Where saves are written (see [`host::default_saves_dir`]).
 fn save_folder() -> String {
-    match std::env::var_os("BASEBALL_SIM_SAVES") {
-        Some(p) => p.to_string_lossy().into_owned(),
-        None => "~/.baseball-sim/saves".into(),
-    }
+    host::default_saves_dir().map_or_else(
+        || format!("no home folder; set {}", host::SAVES_ENV),
+        |p| p.to_string_lossy().into_owned(),
+    )
 }

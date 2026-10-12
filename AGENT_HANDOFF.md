@@ -1,9 +1,9 @@
-# Agent handoff: baseball-sim (written 2026-10-12)
+# Agent handoff: obb-sim (written 2026-10-12)
 
 Single entry point for an agent taking over. Read this, then `CLAUDE.md` and `AGENTS.md` (rules), then `PLAN.md` (HANDOFF section and Phase 7b), `ISSUES.md` (the two failing gates in detail) and `OOTP_BENCHMARK.md` (feature gaps). Do not duplicate their content here; this file only orders them and adds what they lack.
 
 ## 1. What this is
-A closed-source, OOTP-style baseball management sim in Rust, fictional players and teams only. Goal: an open, faster, better OOTP 27 with agent-native connectors. Four roles (commissioner, owner, GM, field manager), each human or AI. Online multiplayer is designed in but is NOT to be started yet (owner order: fix everything wrong in the local game first).
+An open-source (Apache-2.0), OOTP-style baseball management sim in Rust, fictional players and teams only. Goal: an open, faster, better OOTP 27 with agent-native connectors. Four roles (commissioner, owner, GM, field manager), each human or AI. Online multiplayer is designed in but is NOT to be started yet (owner order: fix everything wrong in the local game first).
 
 ## 2. Where we are
 

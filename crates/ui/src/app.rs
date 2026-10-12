@@ -99,15 +99,9 @@ pub struct App {
     pub state: screens::State,
 }
 
-/// The save folder: `BASEBALL_SIM_SAVES` itself, else `~/.baseball-sim/saves`.
+/// The save folder (see [`host::default_saves_dir`]), created if missing.
 fn save_dir() -> Option<PathBuf> {
-    let dir = std::env::var_os("BASEBALL_SIM_SAVES")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map(|h| PathBuf::from(h).join(".baseball-sim").join("saves"))
-        })?;
+    let dir = host::default_saves_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }

@@ -44,8 +44,8 @@ const CITIES: [&str; 15] = [
     "Falcon Rock",
 ];
 const MASCOTS: [&str; 15] = [
-    "Gulls", "Foxes", "Herons", "Badgers", "Marlins", "Wolves", "Otters", "Rams", "Kestrels",
-    "Bison", "Lynx", "Pelicans", "Stags", "Cranes", "Mariners",
+    "Gulls", "Foxes", "Herons", "Badgers", "Ospreys", "Wolves", "Otters", "Rams", "Kestrels",
+    "Bison", "Lynx", "Pelicans", "Stags", "Cranes", "Puffins",
 ];
 
 impl World {

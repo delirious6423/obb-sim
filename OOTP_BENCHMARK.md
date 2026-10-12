@@ -1,4 +1,4 @@
-# OOTP 27 Benchmark vs baseball-sim
+# OOTP 27 Benchmark vs obb-sim
 
 Written 2026-10-12; the "Do we have it" column re-checked against the code on 2026-10-12 (cleanup pass). Research only; no code was changed.
 
@@ -111,7 +111,7 @@ Our best chances to win: an open protocol with agent connectors, a deterministic
 | Weather (fog, overcast, rain) in 3D engine; parks incl. new models. Doc. | same | No (Known gaps: no weather, no park factors) | should | Park factors first; they are also needed for variance. |
 | 3D game viewer | same | No | later | Not a goal. |
 | World Baseball Classic with real federations. Doc. | same | No | later | Fictional data only. |
-| Real-league licences (MLB, KBO, Dutch, British). Doc. | same | N/A (closed, fictional) | later | |
+| Real-league licences (MLB, KBO, Dutch, British). Doc. | same | N/A (fictional only) | later | |
 
 ## Area 6: League options
 

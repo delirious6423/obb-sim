@@ -1,0 +1,14 @@
+obb-sim
+Copyright 2026 delirious6423
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+All players and clubs in this game are fictional. Any resemblance to real
+people or clubs is coincidental.
+
+data/params.json holds league-wide aggregates derived from Retrosheet event
+files. The information used here was obtained free of charge from and is
+copyrighted by Retrosheet. Interested parties may contact Retrosheet at
+"www.retrosheet.org".
+
+Third-party software and data sources are listed in THIRD_PARTY.md.

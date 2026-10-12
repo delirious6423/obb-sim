@@ -16,6 +16,7 @@ pub use client::{GameClient, LocalClient, Ticket};
 pub use data::calibration;
 pub use difficulty::levers_of;
 pub use session::Host;
+pub use storage::{SAVES_ENV, default_saves_dir};
 
 /// The names of the 30 clubs a new game can be started with (the same for
 /// every seed), for a team-pick screen.

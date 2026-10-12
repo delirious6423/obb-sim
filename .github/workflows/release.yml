@@ -26,5 +26,5 @@ jobs:
         run: scripts/build.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: baseball-sim-${{ matrix.os }}
+          name: obb-sim-${{ matrix.os }}
           path: dist/
