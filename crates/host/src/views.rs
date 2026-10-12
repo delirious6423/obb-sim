@@ -3,9 +3,7 @@
 //! public; true talent is never read.
 
 use season::{Schedule, division_of, league_of};
-use world::agents::{
-    ClubBooks, GmView, LeagueObs, OwnerObs, Seen, last_crowd, owner_ticket_for,
-};
+use world::agents::{ClubBooks, GmView, LeagueObs, OwnerObs, Seen, last_crowd, owner_ticket_for};
 use world::player::{Level as WLevel, Origin, Player, PlayerId};
 use world::rating::Kind;
 use world::state::{Phase, Rules, Stance as WStance, TEAMS, TICKET_RANGE, World};
