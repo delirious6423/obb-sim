@@ -108,7 +108,8 @@ impl Active {
             let (first, spare) = if bench > platoons {
                 (platoons, bench - platoons)
             } else {
-                (0, bench)
+                // Every bench player is a platoon partner: no stand-ins left.
+                (0, 0)
             };
             let mut rested = 0;
             for (s, slot) in slots.iter_mut().enumerate() {
@@ -285,13 +286,31 @@ impl Manager for UsageManager {
             return m.relief(v, half_start);
         }
         let closer = v.pitchers.saturating_sub(1);
-        let limit = match (v.pitcher == 0, half_start) {
+        let starter = v.pitcher == 0;
+        // The engine's own pitch and run limits, which `Default` applies.
+        let (engine_pitches, engine_runs) = match (starter, half_start) {
+            (true, true) => (100, 6),
+            (true, false) => (115, 8),
+            (false, true) => (30, 3),
+            (false, false) => (45, 5),
+        };
+        let limit = match (starter, half_start) {
             (true, true) => self.limit,
             (true, false) => self.limit + 15,
             (false, true) => self.relief,
-            (false, false) => return ReliefCall::Default,
+            (false, false) => engine_pitches,
         };
-        if v.pitchers < 3 || v.pitcher == closer || v.pitches_in_outing < limit {
+        if v.pitchers < 3 || v.pitcher == closer {
+            return ReliefCall::Default;
+        }
+        if v.pitches_in_outing < limit {
+            // A limit above the engine's: keep him past the engine's pitch
+            // count, but not past its run limit or into a save spot.
+            let lead = -v.bat_lead();
+            let save = half_start && v.inning >= 9 && (1..=3).contains(&lead);
+            if v.pitches_in_outing >= engine_pitches && v.runs_in_outing < engine_runs && !save {
+                return ReliefCall::Keep;
+            }
             return ReliefCall::Default;
         }
         // The next fresh reliever in the bullpen order (never the closer).
@@ -853,6 +872,9 @@ mod tests {
     #[test]
     fn the_role_preset_brings_the_set_up_man_and_the_closer() {
         let mut m = manager(&Usage::roles());
+        // Starters go to 110 pitches, past the engine's 100.
+        assert_eq!(m.relief(&view(6, 0, 0, 105), true), ReliefCall::Keep);
+        assert_eq!(m.relief(&view(6, 0, 0, 110), true), ReliefCall::Bring(1));
         assert_eq!(m.relief(&view(8, 2, 0, 80), true), ReliefCall::Bring(7));
         assert_eq!(m.relief(&view(9, 3, 7, 15), true), ReliefCall::Bring(8));
         // Not a save spot, and the starter is below his limit.

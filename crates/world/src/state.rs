@@ -16,7 +16,10 @@ pub const TEAMS: usize = 30;
 /// Batters and pitchers each club carries at the major-league level.
 pub const MAJORS_PER_KIND: usize = 13;
 pub const MIN_SALARY: f64 = 0.75;
-pub const MINOR_COST: f64 = 0.06;
+/// Yearly cost of a minor-league contract, millions (salary and upkeep).
+/// Real 2023 minimums run from $26,200 (Single-A) to $35,800 (Triple-A);
+/// 0.045 keeps a 130-player system costing what the 98-player one did.
+pub const MINOR_COST: f64 = 0.045;
 /// Players of one kind a club may hold when the season starts, all levels.
 pub const ROSTER_PER_KIND: usize = 65;
 /// Hard limit of one kind on a club at any time (the offseason runs over
