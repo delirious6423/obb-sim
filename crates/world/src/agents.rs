@@ -152,6 +152,29 @@ pub struct GmObs {
     pub trade: Option<TradeObs>,
 }
 
+impl GmObs {
+    /// Whether the club is in debt (see [`World::in_debt`]).
+    #[must_use]
+    pub fn in_debt(&self) -> bool {
+        self.cash < 0.0
+    }
+
+    /// Whether the club may sign a free agent of `kind` asking `ask` a year:
+    /// the same test as `Command::SignFreeAgent`. A minimum-salary deal needs
+    /// no budget room; a club in debt may only sign minimum-salary players
+    /// while it is short of a major-league staff of that kind.
+    #[must_use]
+    pub fn may_sign(&self, kind: Kind, ask: f64) -> bool {
+        let minimum = ask <= MIN_SALARY + 1e-9;
+        if self.in_debt() {
+            return minimum
+                && self.roster.iter().filter(|s| s.kind == kind).count() < MAJORS_PER_KIND;
+        }
+        minimum
+            || (self.payroll + ask <= self.budget + 1e-9 && self.payroll + ask <= self.payroll_cap)
+    }
+}
+
 /// A general manager's window on the league.
 pub struct GmView<'a> {
     w: &'a World,
@@ -284,6 +307,7 @@ pub fn draft_pick(v: &GmObs) -> Option<Command> {
         if (s.origin == Origin::International) != d.international
             || s.demand > d.ceiling
             || v.cash - s.demand < -CREDIT
+            || v.in_debt()
         {
             continue;
         }
@@ -312,12 +336,7 @@ pub fn draft_pick(v: &GmObs) -> Option<Command> {
 pub fn free_agency_step(v: &GmObs) -> Option<Command> {
     let roster = &v.roster;
     let fa = &v.free_agents;
-    let payroll = v.payroll;
     let price = v.war_price;
-    let room = |ask: f64| {
-        ask <= MIN_SALARY + 1e-9
-            || (payroll + ask <= v.budget + 1e-9 && payroll + ask <= v.payroll_cap)
-    };
     let mut best: Option<(f64, Seen)> = None;
     for kind in [Kind::Batter, Kind::Pitcher] {
         let mut mine: Vec<&Seen> = roster.iter().filter(|s| s.kind == kind).collect();
@@ -332,7 +351,7 @@ pub fn free_agency_step(v: &GmObs) -> Option<Command> {
             mine[MAJORS_PER_KIND - 1].score() + UPGRADE_MARGIN
         };
         for f in fa.iter().filter(|f| f.kind == kind) {
-            if f.score() <= bar || !room(f.ask) {
+            if f.score() <= bar || !v.may_sign(kind, f.ask) {
                 continue;
             }
             let surplus = f.surplus(price);
@@ -350,6 +369,99 @@ pub fn free_agency_step(v: &GmObs) -> Option<Command> {
         salary: f.ask,
         years: f.sign_years(),
     })
+}
+
+/// Quality (summed scores) a trade must add before the built-in general
+/// manager agrees to it.
+const TRADE_MARGIN: f64 = 0.001;
+
+/// Most salary-shedding offers a club in debt makes in one trading turn.
+const DUMPS_PER_TURN: usize = 2;
+
+/// The built-in general manager's trading turn. It answers offers put to it
+/// (yes when the players coming in score better on its own reports and the
+/// payroll stays inside its budget and the cap); a club in debt also offers
+/// its dearest contracts for a cheap, weaker player of the same kind, each to
+/// a different club, to shed salary. A solvent club proposes nothing.
+#[must_use]
+pub fn trade_moves(v: &GmObs) -> Vec<Command> {
+    let mut out: Vec<Command> = v
+        .trade
+        .iter()
+        .flat_map(|t| &t.incoming)
+        .map(|o| Command::RespondTrade {
+            team: v.team,
+            offer: o.id,
+            accept: trade_ok(v, &o.give, &o.get),
+        })
+        .collect();
+    out.extend(salary_dumps(v));
+    out
+}
+
+/// Whether the built-in general manager takes `inn` for `out`.
+#[must_use]
+pub fn trade_ok(v: &GmObs, inn: &[Seen], out: &[Seen]) -> bool {
+    let sum = |s: &[Seen], f: fn(&Seen) -> f64| s.iter().map(f).sum::<f64>();
+    let fits = [Kind::Batter, Kind::Pitcher].into_iter().all(|k| {
+        let n = |s: &[Seen]| s.iter().filter(|x| x.kind == k).count();
+        v.roster.iter().filter(|s| s.kind == k).count() + n(inn) <= ROSTER_MAX_PER_KIND + n(out)
+    });
+    let added = sum(inn, |s| s.salary) - sum(out, |s| s.salary);
+    let affordable = added <= 1e-9
+        || (!v.in_debt()
+            && v.payroll + added <= v.budget + 1e-9
+            && v.payroll + added <= v.payroll_cap + 1e-9);
+    fits && affordable && sum(inn, Seen::score) - sum(out, Seen::score) > TRADE_MARGIN
+}
+
+/// Offers a club in debt makes to shed salary: its dearest contracts, each
+/// for the best minimum-salary player of the same kind on another club who
+/// is clearly weaker (so the other club gains on the deal). Empty for a
+/// solvent club or when the trade market is closed.
+#[must_use]
+pub fn salary_dumps(v: &GmObs) -> Vec<Command> {
+    let Some(t) = v.trade.as_ref().filter(|_| v.in_debt()) else {
+        return Vec::new();
+    };
+    let mut dear: Vec<&Seen> = v
+        .roster
+        .iter()
+        .filter(|s| s.salary > 2.0 * MIN_SALARY)
+        .collect();
+    dear.sort_by(|a, b| b.salary.total_cmp(&a.salary).then(a.id.cmp(&b.id)));
+    let mut used = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for x in dear {
+        if out.len() >= DUMPS_PER_TURN {
+            break;
+        }
+        let back = t
+            .market
+            .iter()
+            .filter(|h| {
+                h.seen.kind == x.kind
+                    && h.seen.salary <= MIN_SALARY + 1e-9
+                    && h.seen.score() < x.score() - 2.0 * TRADE_MARGIN
+                    && !used.contains(&h.club)
+            })
+            .max_by(|a, b| {
+                a.seen
+                    .score()
+                    .total_cmp(&b.seen.score())
+                    .then(b.seen.id.cmp(&a.seen.id))
+            });
+        if let Some(h) = back {
+            used.insert(h.club);
+            out.push(Command::ProposeTrade {
+                team: v.team,
+                partner: h.club,
+                give: vec![x.id],
+                get: vec![h.seen.id],
+            });
+        }
+    }
+    out
 }
 
 /// Put the roster in order: best thirteen of each kind in the majors, then

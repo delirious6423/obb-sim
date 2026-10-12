@@ -221,6 +221,10 @@ pub fn budget_limit_for(
     cash: f64,
     floor: f64,
 ) -> f64 {
+    if cash < 0.0 {
+        // A club in debt is held to the floor until the debt is paid.
+        return floor;
+    }
     let other = 80.0 + 10.0 * market + 0.1 * st.capacity * st.quality;
     let room = 0.5 * (cash + CREDIT).max(0.0);
     (revenue_prev - other + room).max(floor)
@@ -387,9 +391,8 @@ pub struct Finance {
     /// Gate receipts.
     #[serde(default)]
     pub gate: f64,
-    /// The books ended below the credit line: the league arranged new
-    /// ownership (fresh capital, ticket price and stance reset, payroll
-    /// budget at the floor).
+    /// Old saves only: the league used to rescue a club whose books ended
+    /// below the credit line. Always false now (debt carries over).
     #[serde(default)]
     pub rescued: bool,
 }
@@ -461,9 +464,19 @@ impl PartialEq for World {
 }
 
 impl World {
+    /// Whether the club is in debt (cash below zero). A club in debt signs
+    /// no one but the minimum-salary players it needs to field a team, pays
+    /// no draft bonuses, takes on no payroll in trades and is held to the
+    /// payroll floor, until profit or salary-shedding trades clear the debt.
+    #[must_use]
+    pub fn in_debt(&self, team: u8) -> bool {
+        self.clubs[usize::from(team)].cash < 0.0
+    }
+
     /// The most payroll the league lets a club budget: what last year's
     /// revenue left after other costs, plus half of the cash it has above
-    /// its credit line. Never below the payroll floor.
+    /// its credit line. Never below the payroll floor; exactly the floor for
+    /// a club in debt.
     #[must_use]
     pub fn budget_limit(&self, team: usize) -> f64 {
         let c = &self.clubs[team];
