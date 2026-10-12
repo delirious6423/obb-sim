@@ -15,7 +15,7 @@ use calibration::Calibration;
 use storage::{LocalStore, SaveStore, SlotId};
 
 use crate::api::{Progress, Request, Response};
-use crate::session::{Control, Host, saves_of};
+use crate::session::{Control, Host, export_save, import_save, saves_of};
 
 /// Names one submitted request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -135,6 +135,12 @@ fn run(
                     },
                     None => Response::Failed("no save folder".into()),
                 },
+                (None, Request::ExportSave { slot, folder }) => {
+                    export_save(open().as_ref(), &slot, &folder)
+                }
+                (None, Request::ImportSave { path, as_name }) => {
+                    import_save(open().as_ref(), &path, as_name.as_deref())
+                }
                 (Some(h), r) => h.handle(r),
                 (None, _) => Response::Failed("no game in progress".into()),
             }
