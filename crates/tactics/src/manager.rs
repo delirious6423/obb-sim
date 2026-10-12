@@ -38,7 +38,17 @@ pub struct TableManagerMaker {
     /// team's pitcher list from 1 (higher is better).
     bullpen: Vec<f64>,
     log: Arc<DecisionLog>,
+    /// Pitch count at which the starter is lifted at an inning's start
+    /// (plus 15 within an inning); the engine's own limit by default.
+    starter_limit: u16,
+    reliever_limit: u16,
 }
+
+/// The engine's reliever pitch limit at the start of an inning.
+pub const RELIEVER_LIMIT: u16 = 30;
+
+/// The engine's starter pitch limit at the start of an inning.
+pub const STARTER_LIMIT: u16 = 100;
 
 impl TableManagerMaker {
     #[must_use]
@@ -47,7 +57,20 @@ impl TableManagerMaker {
             tables,
             bullpen,
             log,
+            starter_limit: STARTER_LIMIT,
+            reliever_limit: RELIEVER_LIMIT,
         }
+    }
+
+    /// Lift starters at `starter` pitches at an inning's start (`starter +
+    /// 15` within an inning) and relievers at `reliever` pitches at an
+    /// inning's start (`reliever + 15` within one) instead of the engine's
+    /// limits.
+    #[must_use]
+    pub fn with_limits(mut self, starter: u16, reliever: u16) -> Self {
+        self.starter_limit = starter;
+        self.reliever_limit = reliever;
+        self
     }
 }
 
@@ -58,6 +81,8 @@ impl ManagerMaker for TableManagerMaker {
             bullpen: self.bullpen.clone(),
             log: Arc::clone(&self.log),
             local: DecisionStats::default(),
+            starter_limit: self.starter_limit,
+            reliever_limit: self.reliever_limit,
         })
     }
 }
@@ -67,6 +92,8 @@ struct TableManager {
     bullpen: Vec<f64>,
     log: Arc<DecisionLog>,
     local: DecisionStats,
+    starter_limit: u16,
+    reliever_limit: u16,
 }
 
 /// Steals must beat holding by this many runs to be sent.
@@ -144,10 +171,10 @@ impl Manager for TableManager {
         let starter = v.pitcher == 0;
         // The starter and tired relievers go by the same limits as everyone's.
         let (pitch_limit, run_limit) = match (starter, half_start) {
-            (true, true) => (100, 6),
-            (true, false) => (115, 8),
-            (false, true) => (30, 3),
-            (false, false) => (45, 5),
+            (true, true) => (self.starter_limit, 6),
+            (true, false) => (self.starter_limit + 15, 8),
+            (false, true) => (self.reliever_limit, 3),
+            (false, false) => (self.reliever_limit + 15, 5),
         };
         if v.pitches_in_outing >= pitch_limit || v.runs_in_outing >= run_limit {
             return self.bring(v, li);
