@@ -87,6 +87,10 @@ const AI_CAP_RATIO: f64 = 1.25;
 const RECKLESS_CAP_RATIO: f64 = 1.5;
 const RECKLESS_BUDGET_ALL_CAP: f64 = 200.0;
 /// Longest a club may stay in debt, in consecutive settlements. See (b2).
+/// First full run (5 seeds x 6 mixes x 50 seasons, 2026-10-12): 471 spells,
+/// longest 4 settlements (all-reckless mix), deepest -125.0M, 11 still open
+/// at the end (none longer than 4). Limit: 2.5 x the longest measured, so a
+/// club in debt for a decade (its profit no longer paying the debt) fails.
 const MAX_DEBT_SEASONS: u32 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
