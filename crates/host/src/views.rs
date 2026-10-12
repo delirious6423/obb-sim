@@ -488,6 +488,7 @@ pub(crate) fn owner_desk(w: &World, me: u8, stage: Stage, can_act: bool) -> Owne
         stage,
         can_act,
         budget: c.budget,
+        budget_limit: w.budget_limit(usize::from(me)),
         payroll: w.payroll(usize::from(me)),
         cash: c.cash,
         revenue_prev: c.revenue_prev,

@@ -273,3 +273,30 @@ fn a_person_must_hold_at_least_one_role() {
     })));
     assert!(e.contains("role"), "{e}");
 }
+
+/// The owner's desk shows the lenders' limit (never below the floor), and a
+/// budget at the highest allowed figure is accepted. The refusal above the
+/// limit is tested in crates/world/tests/economy.rs.
+#[test]
+fn the_owner_sees_the_lenders_limit() {
+    let dir = tempfile_dir("limit");
+    let c = client(&dir);
+    let roles = Roles {
+        gm: false,
+        owner: true,
+        commissioner: true,
+    };
+    new_game(&c, roles);
+    play_season(&c);
+    ok(c.call(Request::Advance(Advance::FinishSeason)));
+
+    let desk = owner(&c);
+    let lg = league(&c);
+    let (floor, cap) = (lg.rules.payroll_floor, lg.rules.payroll_cap);
+    assert!(desk.budget_limit >= floor, "limit below the floor");
+    // The highest budget the desk can offer: the lenders' limit or the cap.
+    let top = desk.budget_limit.min(cap);
+    assert!(top >= floor, "{top} below the floor");
+    ok(c.call(Request::Act(Action::SetBudget { payroll: top })));
+    assert!(near(owner(&c).budget, top));
+}

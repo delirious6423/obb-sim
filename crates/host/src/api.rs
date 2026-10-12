@@ -510,6 +510,9 @@ pub struct OwnerView {
     pub can_act: bool,
     /// Payroll budget, millions.
     pub budget: f64,
+    /// The most the club's lenders will back as a payroll budget, millions.
+    /// A budget above this is refused.
+    pub budget_limit: f64,
     pub payroll: f64,
     pub cash: f64,
     pub revenue_prev: f64,
