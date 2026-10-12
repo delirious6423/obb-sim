@@ -48,6 +48,10 @@ const SALARY_MOVE: f64 = 5.0;
 const DUMP_BACK: f64 = 1.0;
 /// Seasons of a contract counted in a player's true value.
 const VALUE_YEARS: u8 = 3;
+/// Value, wins, salary taken on, and whether both clubs read the same
+/// direction, for the Rookie side of one trade.
+type Cross = (f64, f64, f64, bool);
+
 /// Millions of true wins value per trade the Rookie side must lose on average.
 const MIN_TRANSFER: f64 = 2.0;
 
@@ -301,7 +305,7 @@ fn easy_general_managers_lose_value_to_hard_ones() {
         .collect();
     // (value, wins, salary taken on, alike) for the Rookie side of each
     // trade between a Rookie and a Hall of Fame club, with a complete window.
-    let mut cross: Vec<(f64, f64, f64, bool)> = Vec::new();
+    let mut cross: Vec<Cross> = Vec::new();
     let (mut rr, mut hh) = (0usize, 0usize);
     for d in runs
         .iter()
@@ -322,7 +326,7 @@ fn easy_general_managers_lose_value_to_hard_ones() {
             (false, false) => hh += 1,
         }
     }
-    let stat = |only_alike: bool, f: &dyn Fn(&(f64, f64, f64, bool)) -> f64| {
+    let stat = |only_alike: bool, f: &dyn Fn(&Cross) -> f64| {
         let v: Vec<f64> = cross.iter().filter(|x| !only_alike || x.3).map(f).collect();
         let n = v.len() as f64;
         let m = v.iter().sum::<f64>() / n.max(1.0);
