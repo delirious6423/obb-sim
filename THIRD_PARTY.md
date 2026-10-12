@@ -39,3 +39,16 @@ Licenses above are the crates' published licenses; re-check with `cargo deny` be
 Fonts: `epaint` (via egui) embeds default fonts under the SIL OFL 1.1 and the Ubuntu Font Licence (crate licence expression `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0`). Their notices are in the Credits screen.
 
 `cargo deny` is not run (it needs a `deny.toml`, which the owner has not written). Re-run the script before every release; it was last run on 2026-10-12 (455 crates, all with a permissive option). Every direct dependency of every crate in the workspace is in the table above; check the table against `crates/*/Cargo.toml` when a dependency is added.
+
+## Reviewed free-agent price benchmark (2026-10-13; unmerged experiment)
+
+Matt Swartz, FanGraphs, "The Linearity of Cost per Win" (2017-07-14), reports
+about $9M per WAR for the 2014-16 free-agent market, net of minimum salary.
+This is the approximate anchor for the unmerged price experiment described in
+`ISSUES.md` section 6. Original code at af61282 still defaults to 4.4; this
+entry documents the reviewed source and does not adopt the candidate.
+The simulator uses `max(price * WAR, minimum)`, so the scalar does not exactly
+replicate that net-of-minimum estimate. It is not total payroll per standings
+win or a verified current-market price. No player data or dependency was added.
+
+Source: https://blogs.fangraphs.com/the-linearity-of-cost-per-win/

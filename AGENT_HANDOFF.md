@@ -6,22 +6,21 @@ Single entry point for an agent taking over. Read this, then `CLAUDE.md` and `AG
 A closed-source, OOTP-style baseball management sim in Rust, fictional players and teams only. Goal: an open, faster, better OOTP 27 with agent-native connectors. Four roles (commissioner, owner, GM, field manager), each human or AI. Online multiplayer is designed in but is NOT to be started yet (owner order: fix everything wrong in the local game first).
 
 ## 2. Where we are
+
+**2026-10-13 documentation update:** original code remains at `af61282`; no candidate implementation was applied. Read `ISSUES.md` section 6 before continuing. It records the independent review, completed attempts, verified candidate results, performance regression, exact local commit/bundle locations and owner decisions. Candidate results are not current-main results; the candidate is held. This is a documentation-only update.
+
 - Phases 0-7 built; `v0.1` tagged; Phase 7b (base-game completeness) in progress; Phase 8 (online) not started.
 - `main` is pushed and tested at unit level (`cargo test --workspace` on 2026-10-12: 212 passed, 0 failed, 23 ignored long gates). CI was not checked after the last pushes (last known green: `ci.yml` on 8e4d820, `release.yml` on db428f5 and the `v0.1` tag); check it first (`gh run list`), per job on ubuntu, macos, windows.
-- Long gates were last run per worker, not all together on the final `main`. First task of any new session: run them all once on `main` and record the numbers (commands in `PLAN.md` HANDOFF, "Gate commands").
+- Main's historical long-gate coverage remains incomplete. The follow-up ran the full required set on a separate candidate with dedicated build outputs; it did not establish an overall pass. Reuse those recorded results when the source is unchanged. Re-run appropriate gates after new changes or to answer a specific unresolved baseline question; do not confuse the candidate with main.
 
-## 3. The two failing gates (your main job, if you want it)
-Full attempt logs, numbers and open questions are in `ISSUES.md` sections 1 and 2. Do not repeat the listed attempts. Summary of what is known:
+## 3. The two failing gates
 
-**Hoarder gate** (`exploit_bots_gain_no_lasting_edge`): the overspending bot beats the reference by +0.026..+0.038 win% (limit: z < 2 and <= 0.015). Debt was proven NOT to be the cause. The sim prices a win at about $4.6M; real MLB free agents cost about $9-10M per WAR. Untested fixes:
-1. Branch `worktree-agent-a4ba1b1810eb11ab0`, commit f155ad9 ("free agents at real $/WAR; revenue and costs rebalanced to MLB"): merge it into a scratch branch and run `cargo test --release -p gm --test ladder mechanism -- --ignored --nocapture` (about 80 s), then the gate. Its WIP commit 39057f9 (inflation) is unfinished and unverified.
-2. The reference GM leaves about 23M of its budget unspent (ReferenceGm in `crates/gm/src/bots.rs`); a reference that spends sensibly narrows the gap.
-3. Check how winning feeds revenue (hype to market revenue in `settle()`, `crates/world/src/decide.rs`) and diminishing returns of roster quality on wins.
-4. A definition question for the OWNER, not for you to decide: is a win edge bought at full price an "exploit"? Do not rewrite the test without the owner's yes.
+`ISSUES.md` sections 1-2 preserve the historical diagnoses and attempts; section 6 supersedes their unsupported source claims and records the completed follow-up. Do not repeat those experiments.
 
-**Draft gate** (`draft_gate`): picks 1-10 mean career WAR 13.4-14.5 (band 9.5-12.8), bust .67-.69 (band .60-.65), picks 31-90 reach and WAR above band. The sourced bands come from studies of classes 5-15 years after the draft; the gate scores complete careers (measured in the study window the sim is in band for WAR). The sim also lacked talent past pick 300 and uses ~28 players per club-year vs ~47 in MLB. Untested/unverified:
-1. Branch `worktree-agent-a48d2592c901712db` (5 commits, some bundling several items: era pitch limits, playing-time customs, weekly rosters, short IL stints, deeper talent pipeline, agent control of playing time, role preset, usage dev aids). Never gated. Merge to a scratch branch, run stability, calibration, manager gates and `draft_gate` plus the study-window dev aid `crates/world/tests/draft_window_dev.rs`.
-2. Owner decision pending: score the gate over the study window, build the pipeline, or both.
+- **Hoarder:** the local price/accounting candidate passes the unchanged exploit gate, but the combined candidate is held because draft still fails and offseason performance regresses. Neither the large economy branch nor unfinished inflation was merged. Debt-only experiments do not prove that debt has zero causal effect.
+- **Draft:** two isolated pipeline/round-count experiments failed and were stopped; both were reverified with separate build directories. Neither is adopted. Source cohorts, cutoffs, denominators and bust normalization must be reconciled before any approved definition or band change.
+- **Review:** save validation, calibration identity, lender-limit enforcement, invalid-event atomicity and lower-minors trade observations have open findings. Shared roster-release cash is fixed only in the unmerged candidate.
+- Exact file/line findings, predictions versus measurements, test-edit inventory, source citations, candidate provenance and all owner asks live in `ISSUES.md` section 6.
 
 ## 4. Owner rules that bind you
 (The full list is `PLAN.md` HANDOFF "Owner rules"; this is the summary.) Never change a gate threshold, golden or test to pass without the owner's explicit yes. Anchor every rate to real MLB statistics and cite the URL. Strategy is fluid: trigger/rule-based usage, defined roles only as optional presets, flexible rotation size, excellent defaults. No bailouts: debt freezes signing and pays down from profit. Every difficulty trades; difficulty changes decisions and information, never the dice. Add inflation. The sim must not get slower (`cargo run --release -p cli -- bench 20`, a season about 0.13 s). Flag repeated failures early and ask for help. Test edits made while removing the credit line that the owner has not yet approved one by one are listed in `ISSUES.md` section 5; do not build on them silently.
@@ -31,10 +30,10 @@ Full attempt logs, numbers and open questions are in `ISSUES.md` sections 1 and 
 - Hard rules: determinism (BTreeMap/IndexMap only, `libm`, one RNG stream per game), every change is a command producing events, pure `sim-core`, role-filtered views, `#[serde(default)]` on new saved fields (old saves must load), no hard payroll cap, log every dependency in `THIRD_PARTY.md`.
 - Heavy gate runs take 2-5 minutes each and slow each other: at most about 3 at once; iterate on 1-2 seeds, run the 5-seed gate once at the end.
 - Git: small commits, push, stage files by name, never commit `data/internal/`. Do not leave leftover `until ...; sleep` wait loops that search for their own command line.
-- Branches on origin besides `main`: the two stopped WIP branches above and `worktree-agent-a0eb0a354888cdb4a` (superseded; its one commit is in `main`). Details in `PLAN.md` HANDOFF, Branches. Worktrees under `.claude/worktrees/` are git-ignored.
+- Branches on origin besides `main`: the two stopped WIP branches listed in `PLAN.md` and `worktree-agent-a0eb0a354888cdb4a` (superseded; its one commit is in `main`). Details in `PLAN.md` HANDOFF, Branches. Worktrees under `.claude/worktrees/` are git-ignored.
 
 ## 6. Next steps in order
-1. Check CI per job; run all long gates on `main`; record results in `PLAN.md`.
-2. Discuss the two failing gates with the owner (questions in `ISSUES.md`); only then attempt fixes.
-3. Phase 7b batches 1-4 (`PLAN.md`): inflation + repricing + luxury tax + richer gate model; service time/options/waivers/40-man/arbitration; injuries, fatigue, platoons, park factors, trigger-based usage with UI rule list and JSON; deeper trade AI, scouting budget, calendar events, command-log saves.
-4. Combined gate pass, independent reviewer, CI green on three OSes, owner playtest. Only then Phase 8.
+1. Read `ISSUES.md` section 6 and resolve its owner decisions before a third economy or draft approach. Keep the held candidate and the large WIP branches separate from main.
+2. Use the recorded candidate commit, bundle and evidence locations if follow-up work is authorized. Keep a distinct build-output directory for each source variant; the earlier shared-cache results are not acceptance evidence.
+3. Address the open correctness findings and the approved draft/performance follow-up, then continue Phase 7b (`PLAN.md`). Re-run checks for the actual code being proposed; no gate or band may be weakened to pass.
+4. Require a combined gate pass, no speed regression, independent review, verified CI jobs on all three OSes and an owner playtest before Phase 8. Remote CI remains unverified; check it when access is available.
