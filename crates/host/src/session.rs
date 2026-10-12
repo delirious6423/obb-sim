@@ -804,6 +804,7 @@ impl Host {
             kind,
             thumbnail_png: None,
             checksum_hex: String::new(),
+            autosave_seq: 0,
         }
     }
 

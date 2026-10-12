@@ -44,6 +44,11 @@ pub struct Manifest {
     pub thumbnail_png: Option<Vec<u8>>,
     /// SHA-256 of the `.sav` bytes, lowercase hex. Set by the store on save.
     pub checksum_hex: String,
+    /// Order of the autosave writes, set by [`crate::LocalStore::autosave`].
+    /// Two autosaves in the same second are told apart by this number.
+    /// Manifests written before it existed read as 0.
+    #[serde(default)]
+    pub autosave_seq: u64,
 }
 
 /// Everything stored inside one `.sav`.

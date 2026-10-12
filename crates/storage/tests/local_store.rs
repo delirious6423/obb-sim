@@ -22,6 +22,7 @@ fn manifest(saved_at_unix: u64) -> Manifest {
         kind: SaveKind::Manual,
         thumbnail_png: Some(vec![0x89, 0x50, 0x4e, 0x47]),
         checksum_hex: String::new(),
+        autosave_seq: 0,
     }
 }
 
@@ -428,4 +429,138 @@ fn store_is_usable_as_trait_object() {
         .save(&slot("dyn"), manifest(1), &data(1))
         .expect("save");
     assert_eq!(boxed.load(&slot("dyn")).expect("load").data, data(1));
+}
+
+/// A slot whose current files are gone but whose backup is left is still
+/// listed, and it shows the backup's manifest with no problem.
+#[test]
+fn list_shows_a_slot_that_has_only_its_backup() {
+    let (_dir, store) = open_store();
+    store
+        .save(&slot("a"), manifest(1), &data(1))
+        .expect("first");
+    store
+        .save(&slot("a"), manifest(2), &data(2))
+        .expect("second");
+    fs::remove_file(store.dir().join("a.sav")).expect("remove sav");
+    fs::remove_file(store.dir().join("a.manifest.json")).expect("remove manifest");
+    // A leftover temporary file on its own is not a slot.
+    fs::write(store.dir().join("loose.sav.tmp"), b"junk").expect("write tmp");
+
+    let listed = store.list().expect("list");
+    let names: Vec<&str> = listed.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(names, ["a"]);
+    assert!(listed[0].problem.is_none(), "{:?}", listed[0].problem);
+    assert_eq!(
+        listed[0].manifest.as_ref().expect("manifest").saved_at_unix,
+        1
+    );
+    let loaded = store.load(&slot("a")).expect("backup loads");
+    assert!(loaded.used_backup);
+}
+
+/// A slot with a backup manifest but no backup save is still reported.
+#[test]
+fn list_flags_a_slot_whose_backup_save_is_gone() {
+    let (_dir, store) = open_store();
+    store
+        .save(&slot("a"), manifest(1), &data(1))
+        .expect("first");
+    store
+        .save(&slot("a"), manifest(2), &data(2))
+        .expect("second");
+    fs::remove_file(store.dir().join("a.sav.bak")).expect("remove backup sav");
+    fs::remove_file(store.dir().join("a.sav")).expect("remove sav");
+
+    let listed = store.list().expect("list");
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].problem.is_some(), "missing saves are flagged");
+    assert!(store.load(&slot("a")).is_err());
+}
+
+/// Autosaves written in the same second still rotate through the slots in
+/// order, one after another.
+#[test]
+fn autosaves_in_the_same_second_rotate_in_order() {
+    let (_dir, store) = open_store();
+    let mut used = Vec::new();
+    for n in 1..=7u8 {
+        let id = store.autosave(manifest(42), &data(n)).expect("autosave");
+        used.push(id.as_str().to_string());
+    }
+    assert_eq!(
+        used,
+        [
+            "auto-1", "auto-2", "auto-3", "auto-1", "auto-2", "auto-3", "auto-1"
+        ]
+    );
+}
+
+/// Manifests written before the sequence field existed read as 0 and are the
+/// oldest writes, ordered by their time.
+#[test]
+fn autosave_treats_manifests_without_a_sequence_as_oldest() {
+    let (_dir, store) = open_store();
+    store
+        .save(&slot("auto-1"), manifest(100), &data(1))
+        .expect("1");
+    store
+        .save(&slot("auto-2"), manifest(50), &data(2))
+        .expect("2");
+    store
+        .save(&slot("auto-3"), manifest(75), &data(3))
+        .expect("3");
+    // Strip the field from auto-1 to look like an old save.
+    let path = store.dir().join("auto-1.manifest.json");
+    let text = fs::read_to_string(&path).expect("read manifest");
+    let mut json: serde_json::Value = serde_json::from_str(&text).expect("json");
+    json.as_object_mut().expect("object").remove("autosave_seq");
+    fs::write(&path, serde_json::to_vec(&json).expect("encode")).expect("write");
+    let old = store
+        .read_manifest(&slot("auto-1"))
+        .expect("old manifest reads");
+    assert_eq!(old.autosave_seq, 0);
+
+    let id = store.autosave(manifest(200), &data(4)).expect("autosave");
+    assert_eq!(id.as_str(), "auto-2");
+    let id = store.autosave(manifest(201), &data(5)).expect("autosave");
+    assert_eq!(id.as_str(), "auto-3");
+    let id = store.autosave(manifest(202), &data(6)).expect("autosave");
+    assert_eq!(id.as_str(), "auto-1");
+}
+
+/// Names that differ only in letter case are refused, so they cannot share
+/// one file on a case-insensitive system. Overwriting the same name is fine.
+#[test]
+fn names_that_differ_only_in_case_are_refused() {
+    let (_dir, store) = open_store();
+    store
+        .save(&slot("Save"), manifest(1), &data(1))
+        .expect("first");
+    store
+        .save(&slot("Save"), manifest(2), &data(2))
+        .expect("overwrite");
+
+    let err = store
+        .save(&slot("save"), manifest(3), &data(3))
+        .expect_err("case clash");
+    assert!(matches!(err, StoreError::InvalidInput(_)), "{err:?}");
+    assert!(err.to_string().contains("letter case"), "{err}");
+    let err = store.save(&slot("SAVE"), manifest(3), &data(3));
+    assert!(err.is_err());
+
+    let names: Vec<String> = store
+        .list()
+        .expect("list")
+        .iter()
+        .map(|s| s.id.to_string())
+        .collect();
+    assert_eq!(names, ["Save"]);
+    assert_eq!(
+        store
+            .read_manifest(&slot("Save"))
+            .expect("kept")
+            .saved_at_unix,
+        2
+    );
 }
