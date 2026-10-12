@@ -7,7 +7,7 @@ use crate::command::{
     ClubFinanceState, Command, Event, Founding, Outcome, Update, WorldError, authorize,
 };
 use crate::player::{
-    Contract, DEFAULT_POOL, Level, Origin, Player, PlayerId, Pool, prospect, slot_bonus, talent_at,
+    Contract, Level, Origin, Player, PlayerId, Pool, prospect, slot_bonus, talent_at,
 };
 use crate::rating::{Kind, Model, normal, uniform};
 use crate::scout::asking_salary;
@@ -78,11 +78,6 @@ impl World {
             tables: Default::default(),
             logs: (0..TEAMS).map(|_| Default::default()).collect(),
         }
-    }
-
-    #[must_use]
-    pub fn with_default_pool(seed: u64, params: sim_core::GameParams, model: Model) -> Self {
-        Self::new(seed, params, model, DEFAULT_POOL)
     }
 
     /// Check, decide and apply a command. Commands that make several events

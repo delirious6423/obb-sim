@@ -272,6 +272,10 @@ fn trading_happens() {
     );
 }
 
+/// Dev aid (not a gate): prints, per bot, how the budget is used (payroll,
+/// cash, contracts) so a ladder result can be explained. Run it alone:
+///
+///     cargo test --release -p gm --test ladder mechanism -- --ignored --nocapture
 #[test]
 #[ignore = "development aid"]
 fn mechanism() {

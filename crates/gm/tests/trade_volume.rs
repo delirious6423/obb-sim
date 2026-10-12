@@ -1,5 +1,6 @@
-//! Trade volume and trade quality by difficulty (ignored by default; they
-//! need the git-ignored `data/internal/params.json`):
+//! Dev aid (not a gate): trade volume and trade quality by difficulty, for
+//! diagnosing `trade_gate`. Ignored by default; needs the git-ignored
+//! `data/internal/params.json`:
 //!
 //!     cargo test --release -p gm --test trade_volume -- --ignored --nocapture
 //!

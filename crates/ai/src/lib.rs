@@ -8,8 +8,8 @@
 //! can implement the same trait. Each trait takes only its own role's view, so
 //! an agent cannot see more than its role allows.
 //!
-//! Difficulty (what the AI knows, how well it decides) will later shape the
-//! view an agent receives and its choices. It never touches the dice.
+//! Difficulty (what the AI knows, how well it decides) is applied by the
+//! agents themselves (`gm::Profile`, `host::difficulty`), never by the dice.
 
 mod permissions;
 mod roles;
