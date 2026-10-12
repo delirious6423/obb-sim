@@ -14,7 +14,8 @@ use crate::scout::asking_salary;
 use crate::state::{
     ClubState, Finance, GATE_SHARE, HOME_GAMES, LOCAL_REVENUE, MAJORS_PER_KIND, NATIONAL_REVENUE,
     OFFERS_PER_CLUB, PLAYOFF_SERIES_REVENUE, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules,
-    Stadium, Stance, TEAMS, TRADE_MAX_PER_SIDE, World, expected_revenue, other_costs,
+    Stadium, Stance, TAX_BENEFITS, TEAMS, TRADE_MAX_PER_SIDE, World, expected_revenue, luxury_tax,
+    other_costs,
 };
 use crate::util::{stream, tag};
 
@@ -597,16 +598,46 @@ impl World {
                 appearances[usize::from(s.b)] += 1;
             }
         }
+        // Luxury tax on payroll over the line announced before the season
+        // (MLB competitive-balance tax; see `luxury_tax`). Of the receipts,
+        // the first 3.5M (founding) funds player benefits and half the rest
+        // the players' retirement fund (both leave the clubs' economy); the
+        // other half goes in equal shares to clubs that paid no tax and
+        // whose local revenue is below the league average (MLB gives it to
+        // the clubs that receive revenue sharing).
+        let line = self.tax_threshold();
+        let payroll: Vec<f64> = (0..n).map(|i| self.payroll(i)).collect();
+        let tax: Vec<f64> = (0..n)
+            .map(|i| {
+                luxury_tax(
+                    payroll[i],
+                    line,
+                    self.rules.tax_rate,
+                    self.clubs[i].tax_years,
+                )
+            })
+            .collect();
+        let receipts: f64 = tax.iter().sum();
+        let to_clubs = 0.5 * (receipts - TAX_BENEFITS * scale).max(0.0);
+        let mean_local = local.iter().sum::<f64>() / n as f64;
+        let takers: Vec<bool> = (0..n)
+            .map(|i| tax[i] == 0.0 && local[i] < mean_local)
+            .collect();
+        let n_takers = takers.iter().filter(|t| **t).count();
         let mut out = Vec::with_capacity(n);
         for i in 0..n {
             let revenue = local[i] * (1.0 - self.rules.revenue_sharing)
                 + pool / n as f64
                 + NATIONAL_REVENUE * scale
                 + PLAYOFF_SERIES_REVENUE * scale * f64::from(appearances[i]);
-            let payroll = self.payroll(i);
+            let tax_share = if takers[i] {
+                to_clubs / n_takers as f64
+            } else {
+                0.0
+            };
             let st = &self.clubs[i].stadium;
             let other = other_costs(self.clubs[i].market, st, scale);
-            let profit = revenue - payroll - other;
+            let profit = revenue + tax_share - payroll[i] - other - tax[i];
             let cash = self.clubs[i].cash;
             // A club that came into the year in debt pays its owners nothing:
             // the whole profit goes to the debt.
@@ -618,15 +649,15 @@ impl World {
             out.push((
                 Finance {
                     revenue,
-                    payroll,
+                    payroll: payroll[i],
                     other,
                     spent: self.clubs[i].spent,
                     dividend,
                     attendance: crowd[i],
                     gate: gate[i],
                     rescued: false,
-                    tax: 0.0,
-                    tax_share: 0.0,
+                    tax: tax[i],
+                    tax_share,
                 },
                 ClubFinanceState {
                     // Debt carries over: there is no rescue.
@@ -634,12 +665,20 @@ impl World {
                     revenue_prev: revenue,
                     hype: hype[i],
                     win_pct_prev: win_pct[i],
+                    tax_years: if tax[i] > 0.0 {
+                        self.clubs[i].tax_years.saturating_add(1)
+                    } else {
+                        0
+                    },
                 },
             ));
         }
+        // The price level moves once a year, at the settlement.
+        let rules = (self.rules.inflation > 0.0).then(|| self.rules.indexed());
         Event::FinancesSettled {
             year: self.year,
             clubs: out,
+            rules,
         }
     }
 

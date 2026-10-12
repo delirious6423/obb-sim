@@ -86,6 +86,7 @@ fn run(cal: &Calibration, seed: u64, years: usize, bot: &str) -> Sums {
     let mut s = Sums::default();
     for y in 0..years {
         let min = w.min_salary();
+        let sc = w.scale();
         let salary: BTreeMap<PlayerId, f64> = w
             .players
             .values()
@@ -103,7 +104,7 @@ fn run(cal: &Calibration, seed: u64, years: usize, bot: &str) -> Sums {
             if let Event::SeasonPlayed { lines, .. } = e {
                 for l in lines {
                     if let Some(sal) = salary.get(&l.player) {
-                        s.fa_salary += sal;
+                        s.fa_salary += sal / sc;
                         s.fa_war += l.war;
                     }
                 }
@@ -118,9 +119,9 @@ fn run(cal: &Calibration, seed: u64, years: usize, bot: &str) -> Sums {
         let (mut a, mut b) = (0.0, 0.0);
         for (t, &wpt) in wp.iter().enumerate() {
             let f = w.finances[t].last().expect("books");
-            s.payroll += f.payroll;
-            s.revenue += f.revenue;
-            s.tax += f.tax;
+            s.payroll += f.payroll / sc;
+            s.revenue += f.revenue / sc;
+            s.tax += f.tax / sc;
             s.club_seasons += 1.0;
             if w.clubs[t].cash < 0.0 {
                 s.debt += 1.0;
@@ -189,11 +190,9 @@ fn probe() {
         .collect();
     for (seed, s) in &all {
         let n = s.seasons;
-        let sc = s.scale.max(1e-9);
         println!(
-            "seed {seed} ({bot}): $/WAR {:.2} (real {:.2}) | payroll {:.1} revenue {:.1} ratio {:.2} | r(payroll,win%) {:.2} | debt club-seasons {:.3} (reference clubs {:.3}) | tax/season {:.1} | scale {:.2} | edge {:+.4} | pay tested {:.1} ref {:.1} | cash tested {:.1} ref {:.1}",
+            "seed {seed} ({bot}), founding dollars: $/WAR {:.2} | payroll {:.1} revenue {:.1} ratio {:.2} | r(payroll,win%) {:.2} | debt club-seasons {:.3} (reference clubs {:.3}) | tax/season {:.1} | scale {:.2} | edge {:+.4} | pay tested {:.1} ref {:.1} | cash tested {:.1} ref {:.1}",
             s.fa_salary / s.fa_war,
-            s.fa_salary / s.fa_war / sc,
             s.payroll / s.club_seasons,
             s.revenue / s.club_seasons,
             s.payroll / s.revenue,

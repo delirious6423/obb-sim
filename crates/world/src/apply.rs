@@ -159,13 +159,22 @@ impl World {
                     return invalid("playoffs name an unknown club");
                 }
             }
-            Event::FinancesSettled { clubs: c, .. } => {
+            Event::FinancesSettled {
+                clubs: c, rules, ..
+            } => {
+                if let Some(next) = rules
+                    && !(self.rules.is_indexing(next) && next.check().is_ok())
+                {
+                    return invalid("a settlement may only index the rules by a year of inflation");
+                }
                 let finite = |x: f64| x.is_finite();
                 if c.iter().any(|(f, s)| {
                     !(finite(f.revenue)
                         && finite(f.payroll)
                         && finite(f.other)
                         && finite(f.dividend)
+                        && finite(f.tax)
+                        && finite(f.tax_share)
                         && finite(s.cash)
                         && finite(s.hype))
                 }) {
@@ -366,7 +375,7 @@ impl World {
                 self.phase = Phase::Settling;
                 Ok(())
             }
-            Event::FinancesSettled { year, clubs } => {
+            Event::FinancesSettled { year, clubs, rules } => {
                 expect_phase(self, Phase::Settling)?;
                 if *year != self.year || clubs.len() != self.clubs.len() {
                     return invalid("finances do not match the world");
@@ -377,6 +386,7 @@ impl World {
                         revenue_prev,
                         hype,
                         win_pct_prev,
+                        tax_years,
                     } = *st;
                     let c = &mut self.clubs[i];
                     c.cash = cash;
@@ -384,6 +394,7 @@ impl World {
                     c.spent = 0.0;
                     c.hype = hype;
                     c.win_pct_prev = win_pct_prev;
+                    c.tax_years = tax_years;
                     // Ballparks wear: quality drifts back toward ordinary.
                     c.stadium.quality = 1.0 + (c.stadium.quality - 1.0) * 0.9;
                     // A club in debt is held to the payroll floor until the
@@ -393,6 +404,17 @@ impl World {
                         c.budget = c.budget.min(self.rules.payroll_floor);
                     }
                     self.finances[i].push(fin.clone());
+                }
+                // Prices move with inflation: the league's money amounts grow
+                // with the price level; budgets and tickets stay inside the
+                // new limits.
+                if let Some(next) = rules {
+                    self.rules = next.clone();
+                    let (lo, hi) = self.ticket_range();
+                    for c in &mut self.clubs {
+                        c.budget = c.budget.clamp(next.payroll_floor, next.payroll_cap);
+                        c.stadium.ticket = c.stadium.ticket.clamp(lo, hi);
+                    }
                 }
                 self.phase = Phase::Offseason;
                 Ok(())

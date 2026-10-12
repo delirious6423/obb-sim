@@ -176,7 +176,7 @@ fn one() -> f64 {
 /// 4.53M) and 3.2% a year 2010-2023 (3.01M to 4.53M); league revenue grew
 /// about 6.0% a year 2002-2019 (3.7bn to 10.4bn) and about 2.5% a year
 /// 2019-2024 (10.7bn to 12.1bn). 3.5% sits between the salary series.
-pub const DEFAULT_INFLATION: f64 = 0.0;
+pub const DEFAULT_INFLATION: f64 = 0.035;
 /// Highest yearly inflation the commissioner may set.
 pub const INFLATION_MAX: f64 = 0.08;
 
@@ -204,6 +204,9 @@ fn default_tax_rate() -> f64 {
 /// millions. Free agents cost about 9-10M per WAR in real markets (FanGraphs
 /// $/WAR: 9.0M 2014-16; about 10.2M 2023 and 8.9M 2024).
 pub const WAR_PRICE_RANGE: (f64, f64) = (2.0, 20.0);
+/// Luxury-tax receipts that first fund player benefits, founding millions
+/// (MLB: the first 3.5M).
+pub const TAX_BENEFITS: f64 = 3.5;
 /// Lowest and highest luxury-tax line, times the average payroll.
 pub const TAX_LINE_RANGE: (f64, f64) = (1.1, 3.0);
 

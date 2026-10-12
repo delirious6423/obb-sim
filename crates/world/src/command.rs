@@ -248,6 +248,11 @@ pub enum Event {
     FinancesSettled {
         year: i32,
         clubs: Vec<(Finance, ClubFinanceState)>,
+        /// The rules for the coming year when the settlement indexes prices
+        /// (the price level and money amounts grown by a year of inflation;
+        /// see `Rules::indexed`). `None` when there is no inflation.
+        #[serde(default)]
+        rules: Option<crate::state::Rules>,
     },
     BudgetSet {
         team: u8,
@@ -340,6 +345,9 @@ pub struct ClubFinanceState {
     pub revenue_prev: f64,
     pub hype: f64,
     pub win_pct_prev: f64,
+    /// Seasons in a row the club has now paid luxury tax.
+    #[serde(default)]
+    pub tax_years: u8,
 }
 
 #[derive(Debug, Error, PartialEq)]
