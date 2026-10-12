@@ -23,7 +23,8 @@ as the difficulty you chose.
 
 A club whose cash is below zero is in debt: it may sign only minimum-salary
 players to fill its roster, may not take on salary in a trade, is held to the
-payroll floor and pays its owner nothing until its profit has paid the debt.
+payroll floor and pays its owner nothing in any year it starts in debt; its
+profit goes to the debt.
 Nobody bails a club out.
 
 ## What you can see
