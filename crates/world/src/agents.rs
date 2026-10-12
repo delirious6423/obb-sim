@@ -11,7 +11,7 @@ use crate::rating::Kind;
 use crate::scout::{asking_salary, asking_years, opinion, war_of};
 use crate::state::{
     CAPACITY_MAX, CREDIT, MAJORS_PER_KIND, MIN_SALARY, Phase, ROSTER_MAX_PER_KIND, Rules, Stadium,
-    Stance, TICKET_ELASTICITY, TICKET_RANGE, TICKET_REF, World,
+    Stance, TICKET_ELASTICITY, TICKET_RANGE, TICKET_REF, TradeOffer, World,
 };
 
 /// Bonus ceiling relative to the slot at which a pick will still sign.
@@ -127,6 +127,24 @@ pub struct TradeObs {
     pub incoming: Vec<IncomingOffer>,
     /// Major- and top-minor-league players on every other club.
     pub market: Vec<Held>,
+    /// Public facts about every club, this one included (standings, payroll,
+    /// roster size).
+    #[serde(default)]
+    pub clubs: Vec<ClubFacts>,
+    /// This club's own offers still waiting for an answer.
+    #[serde(default)]
+    pub outgoing: Vec<TradeOffer>,
+}
+
+/// What anyone can read about another club: last season's record, its
+/// payroll and how many players of each kind it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClubFacts {
+    pub club: u8,
+    pub win_pct_prev: f64,
+    pub payroll: f64,
+    pub batters: u8,
+    pub pitchers: u8,
 }
 
 /// Everything a general manager may see: the club's own books and roster,
@@ -270,7 +288,37 @@ impl<'a> GmView<'a> {
                 get: o.get.iter().map(|id| self.see(*id)).collect(),
             })
             .collect();
-        obs.trade = Some(TradeObs { incoming, market });
+        let outgoing = self
+            .w
+            .offers
+            .iter()
+            .filter(|o| o.from == self.team)
+            .cloned()
+            .collect();
+        let clubs = (0..self.w.clubs.len())
+            .map(|t| {
+                let c = &self.w.clubs[t];
+                let n = |k: Kind| {
+                    c.players
+                        .iter()
+                        .filter(|id| self.w.players[*id].kind == k)
+                        .count() as u8
+                };
+                ClubFacts {
+                    club: t as u8,
+                    win_pct_prev: c.win_pct_prev,
+                    payroll: self.w.payroll(t),
+                    batters: n(Kind::Batter),
+                    pitchers: n(Kind::Pitcher),
+                }
+            })
+            .collect();
+        obs.trade = Some(TradeObs {
+            incoming,
+            market,
+            clubs,
+            outgoing,
+        });
         obs
     }
 }
@@ -519,9 +567,16 @@ pub fn owner_build_for(o: &OwnerObs) -> Option<f64> {
 /// What the owner tells the general manager, from how the club did.
 #[must_use]
 pub fn owner_stance_for(o: &OwnerObs) -> Stance {
-    if o.win_pct_prev >= 0.56 {
+    stance_from_record(o.win_pct_prev)
+}
+
+/// The direction a club's record points to (what anyone reading the
+/// standings would guess the club is trying to do).
+#[must_use]
+pub fn stance_from_record(win_pct_prev: f64) -> Stance {
+    if win_pct_prev >= 0.56 {
         Stance::Contend
-    } else if o.win_pct_prev <= 0.42 {
+    } else if win_pct_prev <= 0.42 {
         Stance::Rebuild
     } else {
         Stance::Balanced
