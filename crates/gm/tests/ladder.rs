@@ -346,3 +346,62 @@ fn mechanism() {
         println!("{name}: revenue {:.1} other {:.1}", rev / n, oth / n);
     }
 }
+
+/// Development aid: league-wide trade volume per season with every club run
+/// by the same preset (the way a real game runs its AI clubs).
+#[test]
+#[ignore = "development aid"]
+fn trade_volume() {
+    use world::command::Event;
+    let cal = calibration();
+    for preset in Preset::ALL {
+        let mut totals = vec![(0usize, 0usize); 5];
+        let mut per_year: Vec<(usize, usize)> = Vec::new();
+        for (i, seed) in [20_250_101_u64, 1, 2, 3, 4].into_iter().enumerate() {
+            let mut w = World::new(
+                seed,
+                cal.params,
+                Model::from_calibration(&cal),
+                DEFAULT_POOL,
+            );
+            let mut seats = Seats::fill(
+                Box::new(BuiltInCommissioner {
+                    burn_in_years: BURN_IN,
+                }),
+                |_| Box::new(BuiltInOwner),
+                |t| {
+                    Box::new(SurplusGm::new(
+                        u64::from(t),
+                        preset.profile(Personality::BALANCED),
+                    ))
+                },
+                |_| Box::new(BuiltInManager::default()),
+            );
+            let mut log = Vec::new();
+            start_with(&mut w, &mut seats, &mut log).unwrap();
+            for y in 0..10 {
+                let before = log.len();
+                run_year_with(&mut w, &mut seats, &mut log).unwrap();
+                let new = &log[before..];
+                let prop = new
+                    .iter()
+                    .filter(|e| matches!(e, Event::TradeProposed { .. }))
+                    .count();
+                let acc = new
+                    .iter()
+                    .filter(|e| matches!(e, Event::TradeAnswered { accepted: true, .. }))
+                    .count();
+                totals[i].0 += prop;
+                totals[i].1 += acc;
+                if i == 0 {
+                    per_year.push((prop, acc));
+                }
+                if y >= 5 {
+                    println!("{preset:?} seed {seed} year {y}: proposed {prop} accepted {acc}");
+                }
+            }
+        }
+        println!("{preset:?} per-year (seed 1): {per_year:?}");
+        println!("{preset:?} totals per seed over 10 years (proposed, accepted): {totals:?}");
+    }
+}
