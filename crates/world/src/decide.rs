@@ -588,13 +588,11 @@ impl World {
             let other = 80.0 + 10.0 * self.clubs[i].market + 0.1 * st.capacity * st.quality;
             let profit = revenue - payroll - other;
             let cash = self.clubs[i].cash;
-            // A club that came into the year in debt pays its owners nothing:
-            // the whole profit goes to the debt.
-            let dividend = if cash < 0.0 {
-                0.0
-            } else {
-                ((cash + profit) - 0.35 * revenue).max(0.0) * 0.6
-            };
+            // Owners are paid only from what is left above a cushion of 35% of
+            // revenue after the year's profit. A club that came into the year
+            // in debt pays a dividend only if this year's profit clears the debt
+            // and fills the cushion as well.
+            let dividend = ((cash + profit) - 0.35 * revenue).max(0.0) * 0.6;
             out.push((
                 Finance {
                     revenue,

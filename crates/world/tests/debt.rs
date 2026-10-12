@@ -406,17 +406,31 @@ fn a_budget_event_replays_whatever_the_lenders_limit() {
     );
 }
 
-/// A club in debt pays no dividend, even in a year whose profit clears it.
+/// Dividends follow the cushion rule whatever the opening cash: an owner is
+/// paid only from cash after the year's profit that is above 35% of revenue
+/// (so a club that starts in debt pays one only if the year clears the debt
+/// and fills the cushion too). A club far in debt pays none.
 #[test]
-fn a_club_that_starts_the_year_in_debt_pays_no_dividend() {
+fn dividends_are_judged_on_cash_after_the_years_profit() {
     let mut w = founded(7);
     run(&mut w, &[Command::PlaySeason, Command::PlayPlayoffs]);
     w.clubs[0].cash = -0.01;
     w.clubs[1].cash = 1000.0;
+    let start = [w.clubs[0].cash, w.clubs[1].cash];
     run(&mut w, &[Command::SettleFinances]);
-    assert_eq!(w.finances[0][0].dividend, 0.0);
+    for (t, cash0) in start.into_iter().enumerate() {
+        let f = &w.finances[t][0];
+        let profit = f.revenue - f.payroll - f.other;
+        let expected = ((cash0 + profit) - 0.35 * f.revenue).max(0.0) * 0.6;
+        assert!((f.dividend - expected).abs() < 1e-9, "club {t}");
+        assert!((w.clubs[t].cash - (cash0 + profit - f.dividend)).abs() < 1e-9);
+    }
     assert!(
         w.finances[1][0].dividend > 0.0,
         "test needs a dividend payer"
     );
+    // The club that began a hair in debt cleared it and filled the cushion in
+    // one year, so it pays too, and it ends the year out of debt.
+    assert!(w.finances[0][0].dividend > 0.0);
+    assert!(w.clubs[0].cash >= 0.0);
 }
