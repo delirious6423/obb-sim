@@ -337,10 +337,17 @@ impl Host {
                 }
             }
             Stage::Playoffs | Stage::Offseason => {
-                let label = if w.phase == Phase::Offseason && self.office_open() {
-                    "Close the books, then on to the draft"
-                } else {
-                    "Play the playoffs, then on to the draft"
+                // The label names what the next advance really does. Only the
+                // playoffs phase still has playoffs to play.
+                let label = match w.phase {
+                    Phase::Playoffs => "Play the playoffs, then on to the draft",
+                    Phase::Settling | Phase::Progressed if self.office_open() => {
+                        "Settle the season's finances, then open your offseason"
+                    }
+                    Phase::Settling | Phase::Progressed => {
+                        "Settle the season's finances, then on to the draft"
+                    }
+                    _ => "Close the books, then on to the draft",
                 };
                 advance.push((Advance::FinishSeason, label.to_string()));
             }
@@ -1002,4 +1009,55 @@ fn ordinal(n: usize) -> String {
         },
     };
     format!("{n}{suffix}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{Difficulty, NewGame, Preset};
+
+    fn session(roles: Roles) -> Host {
+        let g = NewGame {
+            seed: 77,
+            club: 4,
+            difficulty: Difficulty::Preset(Preset::Veteran),
+            burn_in_years: 2,
+            roles,
+        };
+        Host::new_game(&crate::data::calibration(), &g).expect("new game")
+    }
+
+    /// The overview's advance label must name what the advance does. The
+    /// playoffs are only left to play in the Playoffs phase; once the season
+    /// is in Settling or Progressed the label must not promise playoffs.
+    #[test]
+    fn the_advance_label_names_the_real_next_step() {
+        let label = |s: &mut Host| s.overview().advance[0].1.clone();
+        let owner = Roles {
+            gm: false,
+            owner: true,
+            commissioner: true,
+        };
+        let plain = Roles {
+            gm: true,
+            owner: false,
+            commissioner: false,
+        };
+        for roles in [owner, plain] {
+            let mut s = session(roles);
+            s.world.phase = Phase::Playoffs;
+            assert_eq!(label(&mut s), "Play the playoffs, then on to the draft");
+            for phase in [Phase::Settling, Phase::Progressed] {
+                s.world.phase = phase;
+                let l = label(&mut s);
+                assert!(!l.contains("playoffs"), "{phase:?}: {l}");
+                assert!(l.starts_with("Settle the season"), "{phase:?}: {l}");
+            }
+            s.world.phase = Phase::Settling;
+            let l = label(&mut s);
+            assert_eq!(l.contains("offseason"), roles.owner || roles.commissioner);
+            s.world.phase = Phase::Offseason;
+            assert_eq!(label(&mut s), "Close the books, then on to the draft");
+        }
+    }
 }
