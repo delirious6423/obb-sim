@@ -93,6 +93,8 @@ pub struct App {
     pub message: Option<Message>,
     /// The club whose roster/schedule is on show.
     pub viewing: Club,
+    /// The screen the player page's Back button returns to.
+    pub returns_to: Screen,
     /// Per-screen state, kept here so a screen survives a tab switch.
     pub state: screens::State,
 }
@@ -120,6 +122,7 @@ impl App {
             data: Data::default(),
             message: None,
             viewing: 0,
+            returns_to: Screen::Roster,
             state: screens::State::default(),
         }
     }
@@ -206,6 +209,7 @@ impl App {
     }
 
     pub fn open_player(&mut self, id: u32) {
+        self.returns_to = opened_from(self.screen, self.returns_to);
         self.state.player_id = Some(id);
         self.go(Screen::Player);
     }
@@ -329,5 +333,31 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         screens::shell(self, ui);
+    }
+}
+
+/// Where the player page returns to. Opening a player from another screen
+/// remembers that screen; opening one from the player page keeps the first.
+#[must_use]
+pub fn opened_from(current: Screen, origin: Screen) -> Screen {
+    if current == Screen::Player {
+        origin
+    } else {
+        current
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Screen, opened_from};
+
+    #[test]
+    fn back_returns_to_the_screen_the_player_was_opened_from() {
+        assert_eq!(
+            opened_from(Screen::FreeAgents, Screen::Roster),
+            Screen::FreeAgents
+        );
+        assert_eq!(opened_from(Screen::Roster, Screen::Home), Screen::Roster);
+        assert_eq!(opened_from(Screen::Player, Screen::Trades), Screen::Trades);
     }
 }

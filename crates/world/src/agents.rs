@@ -422,6 +422,7 @@ impl OwnerObs {
     #[must_use]
     pub fn new(w: &World, team: u8) -> Self {
         let c = &w.clubs[usize::from(team)];
+        let (attendance_prev, gate_prev) = last_crowd(w, team);
         Self {
             team,
             year: w.year,
@@ -436,10 +437,8 @@ impl OwnerObs {
             payroll_floor: w.rules.payroll_floor,
             payroll_cap: w.rules.payroll_cap,
             stadium: c.stadium,
-            attendance_prev: w.finances[usize::from(team)]
-                .last()
-                .map_or(0.0, |f| f.attendance),
-            gate_prev: w.finances[usize::from(team)].last().map_or(0.0, |f| f.gate),
+            attendance_prev,
+            gate_prev,
             stance: c.stance,
         }
     }
@@ -449,6 +448,20 @@ impl OwnerObs {
     #[must_use]
     pub fn sold_out(&self) -> bool {
         self.attendance_prev >= 0.98 * self.stadium.capacity
+    }
+}
+
+/// Last settled season's average crowd (thousands per home game) and gate.
+///
+/// A rescued year is reported as `(0.0, 0.0)`: its crowd was drawn at the old
+/// ticket price, which the league has since reset, so it says nothing about
+/// demand at the price the owner is setting now. Zero means "no usable
+/// information", which keeps the owner's ticket price unchanged.
+#[must_use]
+pub fn last_crowd(w: &World, team: u8) -> (f64, f64) {
+    match w.finances[usize::from(team)].last() {
+        Some(f) if !f.rescued => (f.attendance, f.gate),
+        _ => (0.0, 0.0),
     }
 }
 

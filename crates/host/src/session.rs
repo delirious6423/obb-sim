@@ -337,10 +337,17 @@ impl Host {
                 }
             }
             Stage::Playoffs | Stage::Offseason => {
-                let label = if w.phase == Phase::Offseason && self.office_open() {
-                    "Close the books, then on to the draft"
-                } else {
-                    "Play the playoffs, then on to the draft"
+                // The label names what the next advance really does. Only the
+                // playoffs phase still has playoffs to play.
+                let label = match w.phase {
+                    Phase::Playoffs => "Play the playoffs, then on to the draft",
+                    Phase::Settling | Phase::Progressed if self.office_open() => {
+                        "Settle the season's finances, then open your offseason"
+                    }
+                    Phase::Settling | Phase::Progressed => {
+                        "Settle the season's finances, then on to the draft"
+                    }
+                    _ => "Close the books, then on to the draft",
                 };
                 advance.push((Advance::FinishSeason, label.to_string()));
             }
@@ -615,14 +622,20 @@ impl Host {
         self.roles.owner || self.roles.commissioner
     }
 
-    /// Owner budgets must sit inside the payroll limits. A rule change made
-    /// after the owners acted can leave one outside, so clamp them at close.
+    /// Owner budgets must sit inside the payroll limits and under what the
+    /// lenders will back. A rule change, or a stadium build made after the
+    /// owner set the budget, can leave one outside, so clamp them at close.
     fn clamp_budgets(&mut self) -> Result<(), String> {
-        let (floor, cap) = (self.world.rules.payroll_floor, self.world.rules.payroll_cap);
+        let floor = self.world.rules.payroll_floor;
         let mut moved = 0;
         for t in 0..TEAMS as u8 {
             let budget = self.world.clubs[usize::from(t)].budget;
-            let fit = budget.clamp(floor, cap);
+            let top = self
+                .world
+                .rules
+                .payroll_cap
+                .min(self.world.budget_limit(usize::from(t)));
+            let fit = budget.clamp(floor, top);
             if fit != budget {
                 self.world
                     .execute(
@@ -730,6 +743,23 @@ impl Host {
         }
         ctl.start("Starting the season", 4);
         let skip = self.skip();
+        // The person's roster is checked before any other club moves, so a
+        // refusal leaves the league exactly as it was. Without the general
+        // manager seat the AI sets the roster in the rounds below.
+        if self.roles.gm && !self.world.roster_problems(self.club).is_empty() {
+            let before = self.world.clone();
+            self.auto_roster();
+            let mut problems = self.world.roster_problems(self.club);
+            if !problems.is_empty() {
+                // Staff could not fix it without releasing players; the
+                // person must (sign or release) before the season can start.
+                self.world = before;
+                let first = problems.remove(0);
+                return Err(format!("Your roster is not in order: {first}"));
+            }
+            self.notices
+                .push("Your roster was set by your staff.".into());
+        }
         let mut log = Vec::new();
         for _ in 0..3 {
             if !trade_round(&mut self.world, &mut self.seats, &mut log, skip) {
@@ -740,19 +770,6 @@ impl Host {
         while free_agency_round(&mut self.world, &mut self.seats, &mut log, skip) {}
         ctl.step(2);
         roster_stage(&mut self.world, &mut self.seats, &mut log, skip);
-        // Without the general manager seat the AI has already set the roster.
-        if self.roles.gm && !self.world.roster_problems(self.club).is_empty() {
-            self.auto_roster();
-            let mut problems = self.world.roster_problems(self.club);
-            if !problems.is_empty() {
-                // Staff could not fix it without releasing players; the
-                // person must (sign or release) before the season can start.
-                let first = problems.remove(0);
-                return Err(format!("Your roster is not in order: {first}"));
-            }
-            self.notices
-                .push("Your roster was set by your staff.".into());
-        }
         ctl.step(3);
         set_tactics(&mut self.world, &mut self.seats, &mut log);
         start_season(&mut self.world, &mut self.seats, &mut log).map_err(|e| e.to_string())?;
@@ -791,6 +808,7 @@ impl Host {
             kind,
             thumbnail_png: None,
             checksum_hex: String::new(),
+            autosave_seq: 0,
         }
     }
 
@@ -815,6 +833,9 @@ impl Host {
             serde_json::to_string(&self.roles).map_err(|e| e.to_string())?,
         );
         data.meta.insert("data".into(), "params-1".into());
+        data.meta
+            .insert("calibration".into(), calibration_id(&self.cal));
+        data.meta.insert("engine".into(), ENGINE_VERSION.into());
         Ok(data)
     }
 
@@ -889,6 +910,17 @@ impl Host {
             .get("difficulty")
             .and_then(|d| serde_json::from_str(d).ok())
             .ok_or("the save has no difficulty")?;
+        // A league built on other calibration data would play differently
+        // from the one that was saved, so refuse it. Saves from before the
+        // key existed carry no id and are not refused.
+        if let Some(saved) = meta.get("calibration") {
+            let here = calibration_id(cal);
+            if *saved != here {
+                return Err(format!(
+                    "the save was made with other calibration data ({saved}); this build has {here}"
+                ));
+            }
+        }
         let smart = meta.get("smart_tactics").is_some_and(|s| s == "true");
         // Saves from before roles existed were general manager games.
         let roles: Roles = match meta.get("roles") {
@@ -913,6 +945,11 @@ impl Host {
             },
         });
         let mut notices = vec!["Game loaded.".to_string()];
+        if let Some(engine) = meta.get("engine").filter(|e| e.as_str() != ENGINE_VERSION) {
+            notices.push(format!(
+                "The save was made by {engine}; this is {ENGINE_VERSION}. Results may differ."
+            ));
+        }
         if loaded.used_backup {
             notices.push("The save was damaged; the previous copy was loaded.".into());
         }
@@ -1000,4 +1037,170 @@ fn ordinal(n: usize) -> String {
         },
     };
     format!("{n}{suffix}")
+}
+
+/// The identity of the calibration data a league was built on.
+fn calibration_id(cal: &Calibration) -> String {
+    format!("{} | {} PA", cal.source, cal.pa)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{Difficulty, NewGame, Preset};
+    use storage::{SaveKind, SlotId};
+    use world::rating::Kind;
+    use world::state::ROSTER_PER_KIND;
+
+    fn saved_game(dir: &std::path::Path, tag: &str) -> (Host, LocalStore) {
+        let store = LocalStore::open(dir.join(tag)).expect("store");
+        let mut h = session(Roles::default());
+        h.store = Some(store);
+        let resp = h.save("slot", SaveKind::Manual);
+        assert!(matches!(resp, Response::Done(_)), "{resp:?}");
+        let store = h.store.take().expect("store");
+        (h, store)
+    }
+
+    #[test]
+    fn a_save_from_other_calibration_data_is_refused() {
+        let dir = std::env::temp_dir().join(format!("host-cal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (_, store) = saved_game(&dir, "mismatch");
+        let cal = crate::data::calibration();
+        assert!(Host::from_save(&cal, &store, "slot").is_ok());
+        let mut other = cal.clone();
+        other.pa += 1;
+        let e = Host::from_save(&other, &store, "slot")
+            .err()
+            .expect("other calibration must be refused");
+        assert!(e.contains("calibration"), "{e}");
+    }
+
+    #[test]
+    fn an_older_engine_version_loads_with_a_notice() {
+        let dir = std::env::temp_dir().join(format!("host-eng-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (h, store) = saved_game(&dir, "engine");
+        let id = SlotId::new("slot").expect("slot");
+        let mut data = h.save_data().expect("data");
+        data.meta
+            .insert("engine".into(), "sim 0.0.1 / rules 0".into());
+        store
+            .save(&id, h.manifest(SaveKind::Manual), &data)
+            .expect("resave");
+        let cal = crate::data::calibration();
+        let loaded = Host::from_save(&cal, &store, "slot").expect("loads");
+        assert!(
+            loaded
+                .notices
+                .iter()
+                .any(|n| n.contains("Results may differ")),
+            "{:?}",
+            loaded.notices
+        );
+    }
+
+    #[test]
+    fn a_save_without_calibration_or_engine_keys_still_loads() {
+        let dir = std::env::temp_dir().join(format!("host-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (h, store) = saved_game(&dir, "old");
+        let id = SlotId::new("slot").expect("slot");
+        let mut data = h.save_data().expect("data");
+        data.meta.remove("calibration");
+        data.meta.remove("engine");
+        store
+            .save(&id, h.manifest(SaveKind::Manual), &data)
+            .expect("resave");
+        let cal = crate::data::calibration();
+        let loaded = Host::from_save(&cal, &store, "slot").expect("old save loads");
+        assert!(
+            !loaded
+                .notices
+                .iter()
+                .any(|n| n.contains("Results may differ"))
+        );
+    }
+
+    fn session(roles: Roles) -> Host {
+        let g = NewGame {
+            seed: 77,
+            club: 4,
+            difficulty: Difficulty::Preset(Preset::Veteran),
+            burn_in_years: 2,
+            roles,
+        };
+        Host::new_game(&crate::data::calibration(), &g).expect("new game")
+    }
+
+    /// The overview's advance label must name what the advance does. The
+    /// playoffs are only left to play in the Playoffs phase; once the season
+    /// is in Settling or Progressed the label must not promise playoffs.
+    #[test]
+    fn the_advance_label_names_the_real_next_step() {
+        let label = |s: &mut Host| s.overview().advance[0].1.clone();
+        let owner = Roles {
+            gm: false,
+            owner: true,
+            commissioner: true,
+        };
+        let plain = Roles {
+            gm: true,
+            owner: false,
+            commissioner: false,
+        };
+        for roles in [owner, plain] {
+            let mut s = session(roles);
+            s.world.phase = Phase::Playoffs;
+            assert_eq!(label(&mut s), "Play the playoffs, then on to the draft");
+            for phase in [Phase::Settling, Phase::Progressed] {
+                s.world.phase = phase;
+                let l = label(&mut s);
+                assert!(!l.contains("playoffs"), "{phase:?}: {l}");
+                assert!(l.starts_with("Settle the season"), "{phase:?}: {l}");
+            }
+            s.world.phase = Phase::Settling;
+            let l = label(&mut s);
+            assert_eq!(l.contains("offseason"), roles.owner || roles.commissioner);
+            s.world.phase = Phase::Offseason;
+            assert_eq!(label(&mut s), "Close the books, then on to the draft");
+        }
+    }
+
+    /// A person holding the GM seat whose roster no staff move can fix is
+    /// refused before any other club moves: the league is left as it was.
+    #[test]
+    fn a_broken_roster_is_refused_before_the_league_moves() {
+        let plain = Roles {
+            gm: true,
+            owner: false,
+            commissioner: false,
+        };
+        let mut s = session(plain);
+        s.world.phase = Phase::FreeAgency;
+        let club = usize::from(s.club);
+        // Too many batters on the roster: only the person may release one.
+        let extra: Vec<PlayerId> = s
+            .world
+            .players
+            .values()
+            .filter(|p| p.team.is_none() && p.kind == Kind::Batter)
+            .map(|p| p.id)
+            .take(ROSTER_PER_KIND + 1)
+            .collect();
+        for id in extra {
+            s.world.players.get_mut(&id).expect("player").team = Some(s.club);
+            s.world.clubs[club].players.insert(id);
+        }
+        assert!(!s.world.roster_problems(s.club).is_empty());
+        let before = format!("{:?}", s.world);
+        let notices = s.notices.len();
+        let err = s
+            .start_next_season(&Control::default())
+            .expect_err("a broken roster is refused");
+        assert!(err.starts_with("Your roster is not in order"), "{err}");
+        assert_eq!(format!("{:?}", s.world), before);
+        assert_eq!(s.notices.len(), notices);
+    }
 }

@@ -10,7 +10,7 @@ const LEVELS: [Level; 4] = [Level::Majors, Level::Triple, Level::Double, Level::
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if ui.button("Back").clicked() {
-        app.go(Screen::Roster);
+        app.go(app.returns_to);
     }
     ui.separator();
 

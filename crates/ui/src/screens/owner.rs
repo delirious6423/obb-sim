@@ -58,6 +58,9 @@ fn books(app: &mut App, ui: &mut egui::Ui, o: &OwnerView, live: bool) {
             ui.label("Payroll against budget");
             ui.label(format!("{} of {}", money(o.payroll), money(o.budget)));
             ui.end_row();
+            ui.label("Lenders will back up to");
+            ui.label(money(o.budget_limit));
+            ui.end_row();
         });
     let limits = app
         .data
@@ -68,10 +71,12 @@ fn books(app: &mut App, ui: &mut egui::Ui, o: &OwnerView, live: bool) {
         ui.label("Payroll limits loading.");
         return;
     };
+    // The slider stops at what the lenders will back, never below the floor.
+    let top = hi.min(o.budget_limit).max(lo);
     let mut v = app.state.owner_budget.unwrap_or(o.budget);
     let r = ui.add_enabled(
         live,
-        egui::Slider::new(&mut v, lo..=hi)
+        egui::Slider::new(&mut v, lo..=top)
             .text("Payroll budget")
             .suffix(" M"),
     );
@@ -81,7 +86,7 @@ fn books(app: &mut App, ui: &mut egui::Ui, o: &OwnerView, live: bool) {
     ui.label(format!(
         "The budget stays between the league's payroll floor and cap, {} to {}.",
         money(lo),
-        money(hi)
+        money(top)
     ));
 }
 

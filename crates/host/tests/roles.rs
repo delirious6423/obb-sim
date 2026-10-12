@@ -273,3 +273,62 @@ fn a_person_must_hold_at_least_one_role() {
     })));
     assert!(e.contains("role"), "{e}");
 }
+
+/// The owner's desk shows the lenders' limit (never below the floor), and a
+/// budget at the highest allowed figure is accepted. The refusal above the
+/// limit is tested in crates/world/tests/economy.rs.
+#[test]
+fn the_owner_sees_the_lenders_limit() {
+    let dir = tempfile_dir("limit");
+    let c = client(&dir);
+    let roles = Roles {
+        gm: false,
+        owner: true,
+        commissioner: true,
+    };
+    new_game(&c, roles);
+    play_season(&c);
+    ok(c.call(Request::Advance(Advance::FinishSeason)));
+
+    let desk = owner(&c);
+    let lg = league(&c);
+    let (floor, cap) = (lg.rules.payroll_floor, lg.rules.payroll_cap);
+    assert!(desk.budget_limit >= floor, "limit below the floor");
+    // The highest budget the desk can offer: the lenders' limit or the cap.
+    let top = desk.budget_limit.min(cap);
+    assert!(top >= floor, "{top} below the floor");
+    ok(c.call(Request::Act(Action::SetBudget { payroll: top })));
+    assert!(near(owner(&c).budget, top));
+}
+
+/// A stadium built after the budget was set can lower the lenders' limit
+/// below it. Closing the books must bring the budget back under the limit.
+#[test]
+fn a_budget_above_the_lenders_limit_is_brought_under_it_at_close() {
+    let dir = tempfile_dir("close");
+    let c = client(&dir);
+    let roles = Roles {
+        gm: false,
+        owner: true,
+        commissioner: true,
+    };
+    new_game(&c, roles);
+    play_season(&c);
+    ok(c.call(Request::Advance(Advance::FinishSeason)));
+
+    let cap = league(&c).rules.payroll_cap;
+    ok(c.call(Request::Act(Action::SetBudget { payroll: cap })));
+    // Spend the club's cash (up to 200) so the lenders' room shrinks. The
+    // build may not take the club past its credit line.
+    let cash = owner(&c).cash;
+    let amount = cash.min(200.0);
+    assert!(amount > 0.0, "the club needs cash to build, has {cash}");
+    ok(c.call(Request::Act(Action::BuildStadium { amount })));
+    let before = owner(&c);
+    assert!(before.budget_limit < cap, "the build should bind the limit");
+    assert!(before.budget > before.budget_limit);
+
+    ok(c.call(Request::Advance(Advance::FinishSeason)));
+    let after = owner(&c);
+    assert!(after.budget <= after.budget_limit + 1e-9, "{after:?}");
+}

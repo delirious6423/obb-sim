@@ -22,6 +22,7 @@
 //! crash between the two backup renames. A candidate passes only when its
 //! checksum matches and SQLite can read it. The first passing candidate wins.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -50,6 +51,26 @@ const SAV_LOAD_TMP: &str = ".sav.load.tmp";
 const MANIFEST: &str = ".manifest.json";
 const MANIFEST_TMP: &str = ".manifest.json.tmp";
 const MANIFEST_BAK: &str = ".manifest.json.bak";
+
+/// Every suffix a slot can own on disk.
+const ALL_SUFFIXES: [&str; 7] = [
+    SAV,
+    SAV_TMP,
+    SAV_BAK,
+    SAV_LOAD_TMP,
+    MANIFEST,
+    MANIFEST_TMP,
+    MANIFEST_BAK,
+];
+
+/// The slot name a file belongs to, when the file is one of a slot's saved
+/// copies (`.sav`, `.sav.bak`, `.manifest.json`, `.manifest.json.bak`).
+/// Temporary files are not saved copies, so they give `None`.
+fn slot_stem(file_name: &str) -> Option<&str> {
+    [MANIFEST, MANIFEST_BAK, SAV, SAV_BAK]
+        .iter()
+        .find_map(|suffix| file_name.strip_suffix(suffix))
+}
 
 /// Save slots stored as files in one directory. See the module docs for the
 /// write and read order and the crash guarantees.
@@ -105,10 +126,12 @@ impl LocalStore {
 
     /// Writes an autosave into the next rotating slot and returns its name.
     ///
-    /// The slot is chosen like this: the first `auto-N` (in order) that has no
-    /// manifest; otherwise the one with the oldest `saved_at_unix`, then the
-    /// lowest index. Unreadable manifests count as oldest. `manifest.kind` is
-    /// set to [`SaveKind::Auto`].
+    /// The slot is chosen like this: the first `auto-N` (in order) with no
+    /// files at all; otherwise the one with the oldest write, which is the
+    /// lowest `autosave_seq`, then the oldest `saved_at_unix`, then the lowest
+    /// index. Unreadable manifests count as oldest. The write gets the next
+    /// `autosave_seq`, so saves in the same second rotate in order.
+    /// `manifest.kind` is set to [`SaveKind::Auto`].
     ///
     /// # Errors
     ///
@@ -116,8 +139,19 @@ impl LocalStore {
     pub fn autosave(&self, mut manifest: Manifest, data: &SaveData) -> Result<SlotId> {
         manifest.kind = SaveKind::Auto;
         let slot = self.next_auto_slot()?;
+        manifest.autosave_seq = self.next_autosave_seq();
         self.save(&slot, manifest, data)?;
         Ok(slot)
+    }
+
+    /// One more than the largest `autosave_seq` among the autosave slots.
+    fn next_autosave_seq(&self) -> u64 {
+        self.auto_slot_ids()
+            .iter()
+            .filter_map(|slot| self.read_manifest(slot).ok())
+            .map(|m| m.autosave_seq)
+            .max()
+            .map_or(1, |max| max.saturating_add(1))
     }
 
     /// Writes the quicksave slot ([`QUICK_SLOT`]) and returns its name.
@@ -134,23 +168,49 @@ impl LocalStore {
     }
 
     fn next_auto_slot(&self) -> Result<SlotId> {
-        // Pick by a key that orders free slots first, then the oldest save.
-        let mut best: Option<(Option<u64>, usize, SlotId)> = None;
+        // Pick by a key that orders free slots first, then the oldest write:
+        // (autosave_seq, saved_at_unix, index). Unreadable manifests key as 0.
+        let mut best: Option<((u64, u64, usize), SlotId)> = None;
         for (index, slot) in self.auto_slot_ids().into_iter().enumerate() {
-            if !self.file(&slot, MANIFEST).exists() {
+            if !self.any_file_exists(&slot) {
                 return Ok(slot);
             }
-            let saved_at = self.read_manifest(&slot).ok().map(|m| m.saved_at_unix);
-            let better = match &best {
-                None => true,
-                Some((best_at, best_index, _)) => (saved_at, index) < (*best_at, *best_index),
-            };
-            if better {
-                best = Some((saved_at, index, slot));
+            let (seq, saved_at) = self
+                .read_manifest(&slot)
+                .map_or((0, 0), |m| (m.autosave_seq, m.saved_at_unix));
+            let key = (seq, saved_at, index);
+            if best.as_ref().is_none_or(|(best_key, _)| key < *best_key) {
+                best = Some((key, slot));
             }
         }
-        best.map(|(_, _, slot)| slot)
+        best.map(|(_, slot)| slot)
             .ok_or_else(|| StoreError::InvalidInput("no autosave slots configured".into()))
+    }
+
+    /// True when any file of the slot exists, including backups and leftovers.
+    fn any_file_exists(&self, slot: &SlotId) -> bool {
+        ALL_SUFFIXES
+            .iter()
+            .any(|suffix| self.file(slot, suffix).exists())
+    }
+
+    /// Refuses a name that differs from an existing slot only in letter case.
+    /// Some file systems treat those names as one file, so both could not be
+    /// kept apart.
+    fn refuse_case_clash(&self, slot: &SlotId) -> Result<()> {
+        for entry in fs::read_dir(&self.dir)? {
+            let name = entry?.file_name();
+            let Some(stem) = name.to_str().and_then(slot_stem) else {
+                continue;
+            };
+            if stem != slot.as_str() && stem.eq_ignore_ascii_case(slot.as_str()) {
+                return Err(StoreError::InvalidInput(format!(
+                    "slot {slot} differs only in letter case from slot {stem}; \
+                     choose another name"
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn file(&self, slot: &SlotId, suffix: &str) -> PathBuf {
@@ -200,7 +260,19 @@ impl LocalStore {
     }
 
     fn summarize(&self, id: SlotId) -> SlotSummary {
-        match read_manifest_at(&self.file(&id, MANIFEST), &id) {
+        let sav = self.file(&id, SAV).exists();
+        let bak = self.file(&id, SAV_BAK).exists();
+        let current = read_manifest_at(&self.file(&id, MANIFEST), &id);
+        // Show the pair that load would use: the current one when its save is
+        // there, otherwise the backup pair when it can be read.
+        let (picked, from_backup) = match current {
+            Ok(m) if sav || !bak => (Ok(m), false),
+            current => match read_manifest_at(&self.file(&id, MANIFEST_BAK), &id) {
+                Ok(m) => (Ok(m), true),
+                Err(_) => (current, false),
+            },
+        };
+        match picked {
             Err(err) => SlotSummary {
                 manifest: None,
                 problem: Some(format!("manifest unreadable: {err}")),
@@ -212,7 +284,7 @@ impl LocalStore {
                         "written by newer format version {}",
                         manifest.format_version
                     ))
-                } else if !self.file(&id, SAV).exists() {
+                } else if !sav && (!bak || !from_backup) {
                     Some("save file missing".to_string())
                 } else {
                     None
@@ -252,18 +324,21 @@ impl LocalStore {
 
 impl SaveStore for LocalStore {
     fn list(&self) -> Result<Vec<SlotSummary>> {
-        let mut out = Vec::new();
+        // A slot is any name with a saved copy on disk, so a slot whose current
+        // files are gone but whose backup is left still shows up.
+        let mut stems = BTreeSet::new();
         for entry in fs::read_dir(&self.dir)? {
             let name = entry?.file_name();
-            let Some(stem) = name.to_str().and_then(|n| n.strip_suffix(MANIFEST)) else {
-                continue;
-            };
-            // Names that are not valid slot names are not slots. Skip them.
-            if let Ok(id) = SlotId::new(stem) {
-                out.push(self.summarize(id));
+            if let Some(stem) = name.to_str().and_then(slot_stem) {
+                stems.insert(stem.to_string());
             }
         }
-        out.sort_by(|a, b| a.id.cmp(&b.id));
+        // Names that are not valid slot names are not slots. Skip them.
+        let out = stems
+            .iter()
+            .filter_map(|stem| SlotId::new(stem.as_str()).ok())
+            .map(|id| self.summarize(id))
+            .collect();
         Ok(out)
     }
 
@@ -272,6 +347,7 @@ impl SaveStore for LocalStore {
     }
 
     fn save(&self, slot: &SlotId, mut manifest: Manifest, data: &SaveData) -> Result<()> {
+        self.refuse_case_clash(slot)?;
         self.refuse_newer_existing(slot)?;
         self.remove_tmp_files(slot)?;
 

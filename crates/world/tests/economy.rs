@@ -297,3 +297,60 @@ fn a_rescued_club_loses_the_contracts_that_broke_it() {
     let again = World::restore(GameParams::reference(), Model::generic(), w.snapshot());
     assert!(again.is_ok(), "{:?}", again.err());
 }
+
+/// A rescue makes the crowd of that year useless to the owner: it was drawn
+/// at the old price. The owner's view reports no crowd for it, while a club
+/// that was not rescued still reports its real crowd.
+#[test]
+fn a_rescued_year_reports_no_crowd_to_the_owner() {
+    use world::agents::{OwnerObs, last_crowd};
+    let mut w = founded(7);
+    let c = Actor::commissioner();
+    w.execute(&c, Command::PlaySeason).unwrap();
+    w.execute(&c, Command::PlayPlayoffs).unwrap();
+    w.clubs[0].cash = -10.0 * CREDIT;
+    w.execute(&c, Command::SettleFinances).unwrap();
+    assert!(w.finances[0][0].rescued);
+    assert!(w.finances[0][0].attendance > 0.0, "test needs a real crowd");
+
+    let rescued = OwnerObs::new(&w, 0);
+    assert_eq!(rescued.attendance_prev, 0.0);
+    assert_eq!(rescued.gate_prev, 0.0);
+    assert!(!rescued.sold_out());
+    assert_eq!(last_crowd(&w, 0), (0.0, 0.0));
+
+    let healthy = OwnerObs::new(&w, 1);
+    assert!(!w.finances[1][0].rescued);
+    assert_eq!(healthy.attendance_prev, w.finances[1][0].attendance);
+    assert_eq!(healthy.gate_prev, w.finances[1][0].gate);
+}
+
+/// The lenders cap the payroll budget: a budget above World::budget_limit is
+/// refused and the world is left as it was; the limit itself is accepted.
+#[test]
+fn the_lenders_limit_refuses_a_budget_above_it() {
+    let mut w = offseason(9);
+    // Revenue sets the limit when cash is below the credit line.
+    w.clubs[0].revenue_prev = 150.0;
+    let lim = w.budget_limit(0);
+    let (floor, cap) = (w.rules.payroll_floor, w.rules.payroll_cap);
+    assert!(lim >= floor, "limit {lim} below the floor {floor}");
+    assert!(lim < cap, "test needs a limit below the cap, got {lim}");
+    let before = w.clone();
+    let over = Command::SetBudget {
+        team: 0,
+        payroll: lim + 1.0,
+    };
+    let err = w.execute(&owner(0), over).expect_err("above the limit");
+    assert!(format!("{err:?}").contains("lenders"), "{err:?}");
+    assert!(w == before);
+    w.execute(
+        &owner(0),
+        Command::SetBudget {
+            team: 0,
+            payroll: lim,
+        },
+    )
+    .expect("at the limit");
+    assert!((w.clubs[0].budget - lim).abs() < 1e-9);
+}
