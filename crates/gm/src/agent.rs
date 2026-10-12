@@ -2,9 +2,7 @@ use connect::{GmAction, GmAgent, GmStage, GmTurn};
 use world::agents::{GmObs, Seen, set_levels};
 use world::player::{Origin, PlayerId};
 use world::rating::Kind;
-use world::state::{
-    CREDIT, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB, ROSTER_MAX_PER_KIND, Stance,
-};
+use world::state::{MAJORS_PER_KIND, OFFERS_PER_CLUB, ROSTER_MAX_PER_KIND, Stance};
 
 use crate::profile::{Profile, TradeMode};
 use crate::trade;
@@ -59,7 +57,8 @@ impl SurplusGm {
         for s in &d.prospects {
             if (s.origin == Origin::International) != d.international
                 || s.demand > d.ceiling
-                || obs.cash - s.demand < -CREDIT
+                || obs.cash - s.demand < 0.0
+                || obs.in_debt()
             {
                 continue;
             }
@@ -78,10 +77,6 @@ impl SurplusGm {
     fn free_agency(&self, obs: &GmObs) -> Vec<GmAction> {
         let ctx = Context::new(obs, self.seed);
         let p = &self.profile;
-        let room = |ask: f64| {
-            ask <= MIN_SALARY + 1e-9
-                || (obs.payroll + ask <= obs.budget + 1e-9 && obs.payroll + ask <= obs.payroll_cap)
-        };
         let mut best: Option<(f64, Est, u8)> = None;
         let mut fallback: Option<(f64, Est, u8)> = None;
         for kind in [Kind::Batter, Kind::Pitcher] {
@@ -108,7 +103,7 @@ impl SurplusGm {
                 }
                 let years = ctx.best_years(&e, p);
                 let price = f.ask;
-                if !room(price) {
+                if !obs.may_sign(kind, price) {
                     continue;
                 }
                 let surplus = ctx.surplus(&e, price, years, p);
@@ -127,13 +122,17 @@ impl SurplusGm {
                 }
             }
         }
-        best.or(fallback)
-            .map(|(_, e, years)| GmAction::Sign {
+        if let Some((_, e, years)) = best.or(fallback) {
+            return vec![GmAction::Sign {
                 player: e.seen.id,
                 salary: e.seen.ask,
                 years,
-            })
-            .into_iter()
+            }];
+        }
+        // Short of a staff with nobody asking the minimum: fill at the minimum.
+        world::agents::short_fill_step(obs)
+            .iter()
+            .filter_map(GmAction::from_command)
             .collect()
     }
 
@@ -184,7 +183,34 @@ impl SurplusGm {
                 .collect();
             let max = PROPOSALS.min(OFFERS_PER_CLUB.saturating_sub(t.outgoing.len()));
             let deals = trade::deals(obs, t, &p, self.seed, &self.sent);
-            let made = trade::proposals(deals, max, trade::salary_room(obs, t), &mut used);
+            let mut made = trade::proposals(deals, max, trade::salary_room(obs, t), &mut used);
+            // A club in debt that found too few packages also tries the
+            // plain salary dumps (dearest contract for a minimum-salary man).
+            if obs.in_debt() {
+                let partners: Vec<u8> = made
+                    .iter()
+                    .filter_map(|a| match a {
+                        GmAction::ProposeTrade { partner, .. } => Some(*partner),
+                        _ => None,
+                    })
+                    .collect();
+                for a in world::agents::salary_dumps(obs)
+                    .iter()
+                    .filter_map(GmAction::from_command)
+                {
+                    if made.len() >= max {
+                        break;
+                    }
+                    if let GmAction::ProposeTrade { partner, give, get } = &a
+                        && !partners.contains(partner)
+                        && !give.iter().chain(get).any(|id| used.contains(id))
+                        && !self.sent.contains(&(*partner, give.clone(), get.clone()))
+                    {
+                        used.extend(give.iter().chain(get).copied());
+                        made.push(a);
+                    }
+                }
+            }
             for a in &made {
                 if let GmAction::ProposeTrade { partner, give, get } = a {
                     self.sent.push((*partner, give.clone(), get.clone()));

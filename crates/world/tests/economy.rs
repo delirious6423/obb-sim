@@ -5,7 +5,7 @@ use sim_core::GameParams;
 use world::command::{Command, Event};
 use world::player::DEFAULT_POOL;
 use world::rating::Model;
-use world::state::{CREDIT, Phase, Rules, Stance, TICKET_RANGE, World};
+use world::state::{Phase, Rules, Stance, TICKET_RANGE, World};
 
 fn founded(seed: u64) -> World {
     let mut w = World::new(
@@ -138,8 +138,8 @@ fn a_ballpark_project_costs_cash_and_adds_seats_and_quality() {
     assert!((before.cash - after.cash - 60.0).abs() < 1e-9);
     assert!(after.stadium.capacity > before.stadium.capacity);
     assert!(after.stadium.quality > before.stadium.quality);
-    // A club at its credit line cannot start a project.
-    w.clubs[2].cash = -CREDIT + 1.0;
+    // Cash may not go below zero: a project dearer than the cash is refused.
+    w.clubs[2].cash = 4.0;
     let snapshot = w.clone();
     assert!(
         w.execute(
@@ -272,34 +272,9 @@ fn rules_change_at_most_once_a_year() {
     assert_eq!(snap.rules_set, Some(w.year));
 }
 
-#[test]
-fn a_rescued_club_loses_the_contracts_that_broke_it() {
-    let mut w = founded(7);
-    let c = Actor::commissioner();
-    w.execute(&c, Command::PlaySeason).unwrap();
-    w.execute(&c, Command::PlayPlayoffs).unwrap();
-    // Far below the credit line, so settlement must rescue club 0.
-    w.clubs[0].cash = -10.0 * CREDIT;
-    let others: Vec<f64> = (1..w.clubs.len()).map(|t| w.payroll(t)).collect();
-    let before = w.payroll(0);
-    assert!(
-        before > w.rules.payroll_floor,
-        "test needs a payroll to cut"
-    );
-    w.execute(&c, Command::SettleFinances).unwrap();
-    assert!(w.finances[0][0].rescued);
-    assert!(w.payroll(0) <= w.rules.payroll_floor + 1e-9);
-    assert!(w.payroll(0) < before);
-    // The voided players are free agents, nobody else is touched.
-    for (t, p) in others.iter().enumerate() {
-        assert!((w.payroll(t + 1) - p).abs() < 1e-9);
-    }
-    let again = World::restore(GameParams::reference(), Model::generic(), w.snapshot());
-    assert!(again.is_ok(), "{:?}", again.err());
-}
-
-/// A rescue makes the crowd of that year useless to the owner: it was drawn
-/// at the old price. The owner's view reports no crowd for it, while a club
+/// Old saves only (rescues no longer happen): a rescue made the crowd of that
+/// year useless to the owner, as it was drawn at the old price. The owner's
+/// view reports no crowd for a year an old save marks rescued, while a club
 /// that was not rescued still reports its real crowd.
 #[test]
 fn a_rescued_year_reports_no_crowd_to_the_owner() {
@@ -308,9 +283,12 @@ fn a_rescued_year_reports_no_crowd_to_the_owner() {
     let c = Actor::commissioner();
     w.execute(&c, Command::PlaySeason).unwrap();
     w.execute(&c, Command::PlayPlayoffs).unwrap();
-    w.clubs[0].cash = -10.0 * CREDIT;
+    w.clubs[0].cash = -250.0;
     w.execute(&c, Command::SettleFinances).unwrap();
-    assert!(w.finances[0][0].rescued);
+    // Deep debt is carried, not rescued.
+    assert!(!w.finances[0][0].rescued);
+    // What an old save recorded for a rescued year.
+    w.finances[0][0].rescued = true;
     assert!(w.finances[0][0].attendance > 0.0, "test needs a real crowd");
 
     let rescued = OwnerObs::new(&w, 0);
@@ -330,7 +308,7 @@ fn a_rescued_year_reports_no_crowd_to_the_owner() {
 #[test]
 fn the_lenders_limit_refuses_a_budget_above_it() {
     let mut w = offseason(9);
-    // Revenue sets the limit when cash is below the credit line.
+    // A low revenue sets a limit below the cap.
     w.clubs[0].revenue_prev = 150.0;
     let lim = w.budget_limit(0);
     let (floor, cap) = (w.rules.payroll_floor, w.rules.payroll_cap);

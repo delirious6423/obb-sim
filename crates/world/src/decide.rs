@@ -12,9 +12,9 @@ use crate::player::{
 use crate::rating::{Kind, Model, normal, uniform};
 use crate::scout::asking_salary;
 use crate::state::{
-    CREDIT, ClubState, Finance, GATE_SHARE, HOME_GAMES, MAJORS_PER_KIND, MIN_SALARY,
-    OFFERS_PER_CLUB, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules, Stadium, Stance, TEAMS,
-    TICKET_RANGE, TICKET_REF, TRADE_MAX_PER_SIDE, World,
+    ClubState, Finance, GATE_SHARE, HOME_GAMES, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB,
+    Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules, Stadium, Stance, TEAMS, TICKET_RANGE,
+    TICKET_REF, TRADE_MAX_PER_SIDE, World,
 };
 use crate::util::{stream, tag};
 
@@ -187,6 +187,9 @@ impl World {
             if sal(inn) > sal(out) && after > self.rules.payroll_cap + 1e-9 {
                 return Err(format!("club {club} would be over the payroll cap"));
             }
+            if sal(inn) > sal(out) + 1e-9 && self.in_debt(club) {
+                return Err(format!("club {club} is in debt and cannot add payroll"));
+            }
         }
         Ok(())
     }
@@ -266,15 +269,8 @@ impl World {
             }
             Command::StartSeason => {
                 self.need(Phase::FreeAgency)?;
-                let mut ev = vec![Event::SeasonStarted { year: self.year }];
-                ev.extend(
-                    self.clubs
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, c)| c.cash < -CREDIT)
-                        .map(|(t, _)| Event::ClubRescued { team: t as u8 }),
-                );
-                Ok(ev)
+                // No rescue: a club in debt carries it into the season.
+                Ok(vec![Event::SeasonStarted { year: self.year }])
             }
             Command::SetBudget { team, payroll } => {
                 self.check_team(*team)?;
@@ -320,7 +316,7 @@ impl World {
                         "a ballpark project costs more than 0 and at most 200".into(),
                     ));
                 }
-                if self.clubs[usize::from(*team)].cash - amount < -CREDIT {
+                if self.clubs[usize::from(*team)].cash - amount < 0.0 {
                     return Err(WorldError::Invalid(
                         "the club cannot pay for the ballpark project".into(),
                     ));
@@ -434,8 +430,13 @@ impl World {
                 };
                 let demand = crate::scout::amateur_demand(self, p);
                 let bonus = (demand <= 1.5 * slot).then_some(demand.max(0.1));
+                if bonus.is_some() && self.in_debt(*team) {
+                    return Err(WorldError::Invalid(
+                        "a club in debt cannot sign draftees".into(),
+                    ));
+                }
                 if let Some(b) = bonus
-                    && self.clubs[usize::from(*team)].cash - b < -CREDIT
+                    && self.clubs[usize::from(*team)].cash - b < 0.0
                 {
                     return Err(WorldError::Invalid("club cannot afford the bonus".into()));
                 }
@@ -474,9 +475,25 @@ impl World {
                 if !(1..=crate::agents::MAX_YEARS).contains(years) {
                     return Err(WorldError::Invalid("contracts run 1 to 7 years".into()));
                 }
-                if !salary.is_finite() || *salary < asking_salary(self, p).max(MIN_SALARY) - 1e-9 {
+                // A club short of a staff may fill it at the minimum when no
+                // free agent of the kind asks the minimum (see `short_fill`).
+                let least = if self.short_fill(*team, p.kind) == Some(*player) {
+                    MIN_SALARY
+                } else {
+                    asking_salary(self, p).max(MIN_SALARY)
+                };
+                if !salary.is_finite() || *salary < least - 1e-9 {
                     return Err(WorldError::Invalid(
                         "offer is below the asking salary".into(),
+                    ));
+                }
+                if self.in_debt(*team)
+                    && !(*salary <= MIN_SALARY + 1e-9
+                        && self.kind_count(*team, p.kind, None) < MAJORS_PER_KIND)
+                {
+                    return Err(WorldError::Invalid(
+                        "a club in debt may only sign minimum-salary players it needs to field a team"
+                            .into(),
                     ));
                 }
                 let after = self.payroll(usize::from(*team)) + salary;
@@ -507,7 +524,7 @@ impl World {
                 // A club over its roster limits must be able to cut down, however
                 // little cash it has; otherwise a bad signer could stall the league.
                 let over_limit = self.kind_count(*team, p.kind, None) > ROSTER_PER_KIND;
-                if !over_limit && self.clubs[usize::from(*team)].cash - owed < -CREDIT {
+                if !over_limit && self.clubs[usize::from(*team)].cash - owed < 0.0 {
                     return Err(WorldError::Invalid(
                         "club cannot afford to pay off the contract".into(),
                     ));
@@ -576,8 +593,13 @@ impl World {
             let other = 80.0 + 10.0 * self.clubs[i].market + 0.1 * st.capacity * st.quality;
             let profit = revenue - payroll - other;
             let cash = self.clubs[i].cash;
-            let dividend = ((cash + profit) - 0.35 * revenue).max(0.0) * 0.6;
-            let rescued = cash + profit - dividend < -CREDIT;
+            // A club that came into the year in debt pays its owners nothing:
+            // the whole profit goes to the debt.
+            let dividend = if cash < 0.0 {
+                0.0
+            } else {
+                ((cash + profit) - 0.35 * revenue).max(0.0) * 0.6
+            };
             out.push((
                 Finance {
                     revenue,
@@ -587,14 +609,11 @@ impl World {
                     dividend,
                     attendance: crowd[i],
                     gate: gate[i],
-                    rescued,
+                    rescued: false,
                 },
                 ClubFinanceState {
-                    cash: if rescued {
-                        0.1 * revenue
-                    } else {
-                        cash + profit - dividend
-                    },
+                    // Debt carries over: there is no rescue.
+                    cash: cash + profit - dividend,
                     revenue_prev: revenue,
                     hype: hype[i],
                     win_pct_prev: win_pct[i],

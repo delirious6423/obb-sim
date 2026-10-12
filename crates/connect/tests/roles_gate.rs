@@ -1,5 +1,6 @@
 //! Phase 7 exit gate: any role, human or AI, over fifty seasons on five seeds
-//! must not produce runaway payrolls or insolvent clubs. Ignored by default
+//! must not produce runaway payrolls, and every club that falls into debt
+//! must pay it off from its own profit. Ignored by default
 //! (it needs the git-ignored `data/internal/params.json` and runs six role
 //! mixes x five seeds x fifty seasons on threads):
 //!
@@ -37,13 +38,26 @@
 //!     Allowing 25% (50% for reckless owners) covers that carry-over while
 //!     still catching a runaway.
 //! (b) insolvency: no non-reckless club ever has cash below 0 at a season
-//!     settlement (that covers case 6's 29 AI clubs and case 5). No club, in
-//!     any mix, has cash below -CREDIT, at settlement or at year end. The
-//!     engine enforces -CREDIT for discretionary spending only, so settlement
-//!     losses are the case that can break it. The league completes every
-//!     season with every club's roster legal (`World::roster_problems` empty)
-//!     in the reckless mixes (4, 6). Roster legality is reported for the other
-//!     mixes but not enforced.
+//!     settlement (that covers case 6's 29 AI clubs and case 5).
+//! (b2) debt (replaces the old "no club ever below -CREDIT" criterion, with
+//!     the owner's approval, when the credit line and the rescue were
+//!     removed): a club in debt (cash < 0 after a settlement) signs no one
+//!     but minimum-salary fills, takes on no payroll by trade, is held to the
+//!     payroll floor and pays no dividend, and nobody bails it out. So the
+//!     only way out is its own profit (and salary-shedding trades, which
+//!     raise that profit). The criterion: every debt spell, counted in
+//!     consecutive settlements with cash below 0, ends within
+//!     `MAX_DEBT_SEASONS` settlements; a spell still open when the run ends
+//!     must not already be longer. No `ClubRescued` event and no rescued
+//!     settlement ever happen (the debt is really paid, not wiped). How deep
+//!     a club goes is reported, not limited: a reckless owner can lose a
+//!     lot in one season, and the length of the spell is what shows whether
+//!     the debt is being paid. `MAX_DEBT_SEASONS` was set from the first
+//!     full run of this criterion (longest spell measured, plus margin; see
+//!     the constant).
+//!     Every club's roster is legal (`World::roster_problems` empty) at the
+//!     end of every year, in every mix: a club in debt must still be able to
+//!     field a team.
 //! (c) every run completes all seasons with no `WorldError` from
 //!     `run_year_with`, and the settlement count equals the season count
 //!     (a guard against a vacuous pass).
@@ -63,7 +77,7 @@ use world::agents::{LeagueObs, OwnerObs};
 use world::command::Event;
 use world::player::DEFAULT_POOL;
 use world::rating::Model;
-use world::state::{CREDIT, Rules, Stance, TEAMS, TICKET_RANGE, TICKET_REF, World};
+use world::state::{Rules, Stance, TEAMS, TICKET_RANGE, TICKET_REF, World};
 
 const SEASONS: usize = 50;
 const BURN_IN: u8 = 30;
@@ -72,6 +86,12 @@ const SEEDS: [u64; 5] = [20_250_101, 1, 2, 3, 4];
 const AI_CAP_RATIO: f64 = 1.25;
 const RECKLESS_CAP_RATIO: f64 = 1.5;
 const RECKLESS_BUDGET_ALL_CAP: f64 = 200.0;
+/// Longest a club may stay in debt, in consecutive settlements. See (b2).
+/// First full run (5 seeds x 6 mixes x 50 seasons, 2026-10-12): 471 spells,
+/// longest 4 settlements (all-reckless mix), deepest -125.0M, 11 still open
+/// at the end (none longer than 4). Limit: 2.5 x the longest measured, so a
+/// club in debt for a decade (its profit no longer paying the debt) fails.
+const MAX_DEBT_SEASONS: u32 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mix {
@@ -277,8 +297,15 @@ struct Outcome {
     insolvent_ai: u32,
     /// Settlement cash below zero, reckless clubs.
     insolvent_reckless: u32,
-    /// Club-seasons (settlement or year end) below -CREDIT, any club.
-    below_credit: u32,
+    /// Debt spells (consecutive settlements below zero cash), any club:
+    /// how many began, the longest (open spells included), the deepest cash,
+    /// and how many are still open when the run ends.
+    debt_spells: u32,
+    longest_debt: u32,
+    deepest_debt: f64,
+    open_debts: u32,
+    /// Rescues seen (`ClubRescued` events or rescued settlements); must be 0.
+    rescues: u32,
     roster_problems: u32,
     /// Largest distance of the rules in force from the defaults (relative
     /// floor + cap + sharing), to prove an adversarial commissioner moved them.
@@ -311,7 +338,11 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
         min_cash_reckless: f64::INFINITY,
         insolvent_ai: 0,
         insolvent_reckless: 0,
-        below_credit: 0,
+        debt_spells: 0,
+        longest_debt: 0,
+        deepest_debt: 0.0,
+        open_debts: 0,
+        rescues: 0,
         rule_move: 0.0,
         roster_problems: 0,
         violations: 0,
@@ -319,6 +350,7 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
         payroll_last: 0.0,
     };
     let mut league_payroll = Vec::with_capacity(seasons);
+    let mut spell = [0u32; TEAMS];
     if let Err(e) = start_with(&mut w, &mut seats, &mut log) {
         o.error = Some(format!("found: {e}"));
         return o;
@@ -339,9 +371,20 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
             o.settlements += 1;
             for (t, (fin, st)) in clubs.iter().enumerate() {
                 let res = reckless(mix, t as u8);
-                // A rescued club's recorded cash is the new owners' capital;
-                // before the rescue it was below the credit line.
-                let cash = if fin.rescued { -CREDIT } else { st.cash };
+                let cash = st.cash;
+                if fin.rescued {
+                    o.rescues += 1;
+                }
+                if cash < 0.0 {
+                    if spell[t] == 0 {
+                        o.debt_spells += 1;
+                    }
+                    spell[t] += 1;
+                    o.longest_debt = o.longest_debt.max(spell[t]);
+                    o.deepest_debt = o.deepest_debt.min(cash);
+                } else {
+                    spell[t] = 0;
+                }
                 if res {
                     o.min_cash_reckless = o.min_cash_reckless.min(cash);
                 } else {
@@ -354,23 +397,12 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
                         o.insolvent_ai += 1;
                     }
                 }
-                if st.cash < -CREDIT {
-                    o.below_credit += 1;
-                }
             }
         }
-        // Pre-season rescues (cash below the credit line after the offseason).
-        for ev in &log {
-            if let Event::ClubRescued { team } = ev {
-                if reckless(mix, *team) {
-                    o.insolvent_reckless += 1;
-                    o.min_cash_reckless = o.min_cash_reckless.min(-CREDIT);
-                } else {
-                    o.insolvent_ai += 1;
-                    o.min_cash_ai = o.min_cash_ai.min(-CREDIT);
-                }
-            }
-        }
+        o.rescues += log
+            .iter()
+            .filter(|ev| matches!(ev, Event::ClubRescued { .. }))
+            .count() as u32;
         let d = Rules::default();
         let mv = (w.rules.payroll_cap / d.payroll_cap - 1.0).abs()
             + (w.rules.payroll_floor / d.payroll_floor - 1.0).abs()
@@ -394,13 +426,11 @@ fn play(mut w: World, mix: Mix, seed: u64, seasons: usize, burn_in: u8) -> Outco
                 }
                 o.min_cash_ai = o.min_cash_ai.min(cash);
             }
-            if cash < -CREDIT {
-                o.below_credit += 1;
-            }
             o.roster_problems += w.roster_problems(tt).len() as u32;
         }
         league_payroll.push(total / TEAMS as f64);
     }
+    o.open_debts = spell.iter().filter(|n| **n > 0).count() as u32;
     o.violations = seats.violations.len();
     let n = league_payroll.len();
     o.payroll_first = mean(&league_payroll[..n.min(10)]);
@@ -441,8 +471,14 @@ fn verdict(mix: Mix, o: &Outcome, seasons: usize) -> Vec<String> {
             o.insolvent_ai
         ));
     }
-    if o.below_credit > 0 {
-        f.push(format!("{} club-seasons below -CREDIT", o.below_credit));
+    if o.longest_debt > MAX_DEBT_SEASONS {
+        f.push(format!(
+            "a club stayed in debt {} seasons (limit {MAX_DEBT_SEASONS})",
+            o.longest_debt
+        ));
+    }
+    if o.rescues > 0 {
+        f.push(format!("{} rescues (debt wiped, not paid)", o.rescues));
     }
     if matches!(mix, Mix::Adversary | Mix::OneReckless) && o.rule_move < 0.3 {
         f.push(format!(
@@ -450,7 +486,7 @@ fn verdict(mix: Mix, o: &Outcome, seasons: usize) -> Vec<String> {
             o.rule_move
         ));
     }
-    if matches!(mix, Mix::AllReckless | Mix::OneReckless) && o.roster_problems > 0 {
+    if o.roster_problems > 0 {
         f.push(format!("{} roster problems", o.roster_problems));
     }
     f
@@ -519,7 +555,7 @@ fn money(v: f64) -> String {
 fn roles_gate() {
     let results = run_grid(&SEEDS, SEASONS, BURN_IN, calibrated_world);
     println!(
-        "{:<4} {:>10} {:>9} {:>9} {:>8} {:>8} {:>6} {:>6} {:>6} {:>5} {:>7} {:>8} {:>8}  verdict",
+        "{:<4} {:>10} {:>9} {:>9} {:>8} {:>8} {:>6} {:>6} {:>6} {:>7} {:>8} {:>5} {:>5} {:>7} {:>8} {:>8}  verdict",
         "case",
         "seed",
         "minCashAI",
@@ -528,7 +564,10 @@ fn roles_gate() {
         "maxRatRc",
         "insAI",
         "insRc",
-        "belowCr",
+        "spells",
+        "longest",
+        "deepest",
+        "open",
         "roster",
         "viol",
         "payFirst",
@@ -538,7 +577,7 @@ fn roles_gate() {
     for (mix, seed, o) in &results {
         let f = verdict(*mix, o, SEASONS);
         println!(
-            "{:<4} {:>10} {:>9} {:>9} {:>8.3} {:>8.3} {:>6} {:>6} {:>6} {:>5} {:>7} {:>8} {:>8}  {}",
+            "{:<4} {:>10} {:>9} {:>9} {:>8.3} {:>8.3} {:>6} {:>6} {:>6} {:>7} {:>8.1} {:>5} {:>5} {:>7} {:>8} {:>8}  {}",
             mix.number(),
             seed,
             money(o.min_cash_ai),
@@ -547,7 +586,10 @@ fn roles_gate() {
             o.max_ratio_reckless,
             o.insolvent_ai,
             o.insolvent_reckless,
-            o.below_credit,
+            o.debt_spells,
+            o.longest_debt,
+            o.deepest_debt,
+            o.open_debts,
             o.roster_problems,
             o.violations,
             money(o.payroll_first),

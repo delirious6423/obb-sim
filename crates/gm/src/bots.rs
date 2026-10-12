@@ -3,15 +3,13 @@
 //! league and otherwise plays like the built-in general manager.
 
 use connect::{BuiltInGm, GmAction, GmAgent, GmStage, GmTurn};
-use world::agents::Seen;
+use world::agents::{Seen, salary_dumps};
 use world::player::Level;
 use world::rating::Kind;
 use world::state::{MAJORS_PER_KIND, MIN_SALARY, ROSTER_MAX_PER_KIND};
 
-fn room(t: &GmTurn, ask: f64) -> bool {
-    let o = &t.obs;
-    ask <= MIN_SALARY + 1e-9
-        || (o.payroll + ask <= o.budget + 1e-9 && o.payroll + ask <= o.payroll_cap)
+fn room(t: &GmTurn, f: &Seen) -> bool {
+    t.obs.may_sign(f.kind, f.ask)
 }
 
 fn count(t: &GmTurn, kind: Kind) -> usize {
@@ -22,7 +20,7 @@ fn best_now(t: &GmTurn, ok: impl Fn(&Seen) -> bool) -> Option<&Seen> {
     t.obs
         .free_agents
         .iter()
-        .filter(|f| count(t, f.kind) < ROSTER_MAX_PER_KIND && room(t, f.ask) && ok(f))
+        .filter(|f| count(t, f.kind) < ROSTER_MAX_PER_KIND && room(t, f) && ok(f))
         .max_by(|a, b| a.now.total_cmp(&b.now).then(b.id.cmp(&a.id)))
 }
 
@@ -32,6 +30,10 @@ fn best_now(t: &GmTurn, ok: impl Fn(&Seen) -> bool) -> Option<&Seen> {
 pub struct Hoarder;
 
 impl GmAgent for Hoarder {
+    fn trades(&self) -> bool {
+        BuiltInGm.trades()
+    }
+
     fn act(&mut self, turn: &GmTurn) -> Vec<GmAction> {
         if turn.stage != GmStage::FreeAgency {
             return BuiltInGm.act(turn);
@@ -52,6 +54,10 @@ impl GmAgent for Hoarder {
 pub struct Tanker;
 
 impl GmAgent for Tanker {
+    fn trades(&self) -> bool {
+        BuiltInGm.trades()
+    }
+
     fn act(&mut self, turn: &GmTurn) -> Vec<GmAction> {
         if turn.stage != GmStage::FreeAgency {
             return BuiltInGm.act(turn);
@@ -72,6 +78,10 @@ impl GmAgent for Tanker {
 pub struct Stretcher;
 
 impl GmAgent for Stretcher {
+    fn trades(&self) -> bool {
+        BuiltInGm.trades()
+    }
+
     fn act(&mut self, turn: &GmTurn) -> Vec<GmAction> {
         let mut acts = BuiltInGm.act(turn);
         for a in &mut acts {
@@ -105,12 +115,18 @@ impl GmAgent for TradeSpammer {
             .iter()
             .map(|o| {
                 let sum = |v: &[Seen]| v.iter().map(|s| s.now).sum::<f64>();
+                let pay = |v: &[Seen]| v.iter().map(|s| s.salary).sum::<f64>();
+                // Greedy on quality, but never for salary the club may not take.
+                let affordable = turn
+                    .obs
+                    .may_take_salary(turn.obs.payroll, pay(&o.give) - pay(&o.get));
                 GmAction::RespondTrade {
                     offer: o.id,
-                    accept: sum(&o.give) > sum(&o.get),
+                    accept: affordable && sum(&o.give) > sum(&o.get),
                 }
             })
             .collect();
+        out.extend(dumps(turn));
         let mut mine: Vec<&Seen> = turn
             .obs
             .roster
@@ -118,6 +134,7 @@ impl GmAgent for TradeSpammer {
             .filter(|s| s.level <= Level::Triple)
             .collect();
         mine.sort_by(|a, b| a.now.total_cmp(&b.now).then(a.id.cmp(&b.id)));
+        let in_debt = |club: u8| t.clubs.iter().any(|f| f.club == club && f.in_debt);
         let mut used = Vec::new();
         for x in mine.iter().take(8) {
             let best = t
@@ -128,6 +145,9 @@ impl GmAgent for TradeSpammer {
                         && h.seen.now > x.now
                         && (h.seen.salary - x.salary).abs() < 3.0
                         && !used.contains(&h.seen.id)
+                        // No salary to a side the league would refuse it to.
+                        && (h.seen.salary <= x.salary || !turn.obs.in_debt())
+                        && (x.salary <= h.seen.salary || !in_debt(h.club))
                 })
                 .max_by(|a, b| {
                     a.seen
@@ -175,6 +195,14 @@ impl GmAgent for ReferenceGm {
     }
 }
 
+/// Salary-shedding offers when the club is in debt (none otherwise).
+fn dumps(t: &GmTurn) -> Vec<GmAction> {
+    salary_dumps(&t.obs)
+        .into_iter()
+        .filter_map(|c| GmAction::from_command(&c))
+        .collect()
+}
+
 /// With the usual signing step finished, buy the best upgrade the budget
 /// still allows, whatever the price: a budget is there to be spent. First
 /// upgrades to the thirteen who play, then to the depth behind them (the
@@ -208,7 +236,7 @@ fn best_upgrade(t: &GmTurn, spots: usize) -> Option<GmAction> {
         let bar = mine.get(spots - 1).copied().unwrap_or(f64::NEG_INFINITY) + 0.0015;
         for f in t.obs.free_agents.iter().filter(|f| f.kind == kind) {
             if f.score() > bar
-                && room(t, f.ask)
+                && room(t, f)
                 && best.is_none_or(|b| (f.score(), b.id) > (b.score(), f.id))
             {
                 best = Some(f);

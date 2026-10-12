@@ -22,9 +22,6 @@ pub const ROSTER_PER_KIND: usize = 49;
 /// Hard limit of one kind on a club at any time (the offseason runs over
 /// the season limit until the GM sets levels).
 pub const ROSTER_MAX_PER_KIND: usize = 60;
-/// How far below zero a club's cash may be pushed by discretionary spending
-/// (bonuses, paying off released contracts).
-pub const CREDIT: f64 = 25.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Phase {
@@ -221,9 +218,12 @@ pub fn budget_limit_for(
     cash: f64,
     floor: f64,
 ) -> f64 {
+    if cash < 0.0 {
+        // A club in debt is held to the floor until the debt is paid.
+        return floor;
+    }
     let other = 80.0 + 10.0 * market + 0.1 * st.capacity * st.quality;
-    let room = 0.5 * (cash + CREDIT).max(0.0);
-    (revenue_prev - other + room).max(floor)
+    (revenue_prev - other + 0.5 * cash).max(floor)
 }
 
 /// Average ticket price the demand curve is anchored to, dollars.
@@ -387,9 +387,8 @@ pub struct Finance {
     /// Gate receipts.
     #[serde(default)]
     pub gate: f64,
-    /// The books ended below the credit line: the league arranged new
-    /// ownership (fresh capital, ticket price and stance reset, payroll
-    /// budget at the floor).
+    /// Old saves only: the league used to rescue a club whose books ended
+    /// below the credit line. Always false now (debt carries over).
     #[serde(default)]
     pub rescued: bool,
 }
@@ -461,9 +460,48 @@ impl PartialEq for World {
 }
 
 impl World {
+    /// Whether the club is in debt (cash below zero). A club in debt signs
+    /// no one but the minimum-salary players it needs to field a team, pays
+    /// no draft bonuses, takes on no payroll in trades and is held to the
+    /// payroll floor, until profit or salary-shedding trades clear the debt.
+    #[must_use]
+    pub fn in_debt(&self, team: u8) -> bool {
+        self.clubs[usize::from(team)].cash < 0.0
+    }
+
+    /// The free agent a club short of a major-league staff of `kind` (fewer
+    /// than thirteen of that kind on the whole roster) may sign at the
+    /// minimum salary whatever he asks, when no free agent of that kind asks
+    /// the minimum: the cheapest of them (lowest id on ties). This keeps a
+    /// club in debt, which may only sign minimum-salary players, from being
+    /// unable to field a team. `None` when the club is not short, when a
+    /// minimum-salary free agent of that kind exists, or when there is none
+    /// of that kind at all.
+    #[must_use]
+    pub fn short_fill(&self, team: u8, kind: crate::rating::Kind) -> Option<PlayerId> {
+        if self.kind_count(team, kind, None) >= MAJORS_PER_KIND {
+            return None;
+        }
+        let mut best: Option<(f64, PlayerId)> = None;
+        for id in &self.free_agents {
+            let p = &self.players[id];
+            if p.kind != kind {
+                continue;
+            }
+            let ask = crate::scout::asking_salary(self, p);
+            if ask <= MIN_SALARY + 1e-9 {
+                return None;
+            }
+            if best.is_none_or(|(a, _)| ask < a) {
+                best = Some((ask, *id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     /// The most payroll the league lets a club budget: what last year's
-    /// revenue left after other costs, plus half of the cash it has above
-    /// its credit line. Never below the payroll floor.
+    /// revenue left after other costs, plus half of the club's cash. Never
+    /// below the payroll floor; exactly the floor for a club in debt.
     #[must_use]
     pub fn budget_limit(&self, team: usize) -> f64 {
         let c = &self.clubs[team];

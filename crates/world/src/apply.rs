@@ -3,7 +3,7 @@
 use crate::command::{ClubFinanceState, Event, Founding, Line, Outcome, WorldError};
 use crate::player::{Contract, Level, Player, PlayerId};
 use crate::state::{
-    CAPACITY_MAX, CREDIT, Draft, InSeason, MAJORS_PER_KIND, MINOR_COST, Phase, QUALITY_MAX,
+    CAPACITY_MAX, Draft, InSeason, MAJORS_PER_KIND, MINOR_COST, Phase, QUALITY_MAX,
     ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, SeasonRecord, TICKET_RANGE, World,
 };
 
@@ -193,9 +193,6 @@ impl World {
                 {
                     return invalid("budget outside the payroll limits");
                 }
-                if *payroll > self.budget_limit(usize::from(*team)) + 1e-9 {
-                    return invalid("budget above what the club's lenders allow");
-                }
             }
             Event::TicketSet { team, price } => {
                 if !club_ok(*team) {
@@ -212,7 +209,7 @@ impl World {
                 if !amount.is_finite() || *amount <= 0.0 || *amount > 200.0 {
                     return invalid("ballpark project outside the allowed size");
                 }
-                if self.clubs[usize::from(*team)].cash - amount < -CREDIT {
+                if self.clubs[usize::from(*team)].cash - amount < 0.0 {
                     return invalid("the club cannot pay for the ballpark project");
                 }
             }
@@ -224,9 +221,6 @@ impl World {
             Event::ClubRescued { team } => {
                 if !club_ok(*team) {
                     return Err(WorldError::UnknownClub(*team));
-                }
-                if self.clubs[usize::from(*team)].cash >= -CREDIT {
-                    return invalid("the club is not below its credit line");
                 }
             }
             Event::RulesSet { rules } => {
@@ -373,7 +367,6 @@ impl World {
                 if *year != self.year || clubs.len() != self.clubs.len() {
                     return invalid("finances do not match the world");
                 }
-                let mut rescued = Vec::new();
                 for (i, (fin, st)) in clubs.iter().enumerate() {
                     let ClubFinanceState {
                         cash,
@@ -389,16 +382,13 @@ impl World {
                     c.win_pct_prev = win_pct_prev;
                     // Ballparks wear: quality drifts back toward ordinary.
                     c.stadium.quality = 1.0 + (c.stadium.quality - 1.0) * 0.9;
-                    if fin.rescued {
-                        c.stadium.ticket = crate::state::TICKET_REF;
-                        c.stance = crate::state::Stance::Balanced;
+                    // A club in debt is held to the payroll floor until the
+                    // debt is paid. (`fin.rescued` is from old saves; there
+                    // are no rescues any more.)
+                    if cash < 0.0 {
                         c.budget = c.budget.min(self.rules.payroll_floor);
-                        rescued.push(i);
                     }
                     self.finances[i].push(fin.clone());
-                }
-                for i in rescued {
-                    self.receivership(i);
                 }
                 self.phase = Phase::Offseason;
                 Ok(())
@@ -426,13 +416,9 @@ impl World {
                 c.stadium.capacity = (c.stadium.capacity + 0.05 * amount).min(CAPACITY_MAX);
                 Ok(())
             }
+            // Old saves only: rescues no longer happen and change nothing.
             Event::ClubRescued { team } => {
-                let floor = self.rules.payroll_floor;
-                let c = self.club_mut(*team)?;
-                c.cash = 0.1 * c.revenue_prev;
-                c.stadium.ticket = crate::state::TICKET_REF;
-                c.stance = crate::state::Stance::Balanced;
-                c.budget = c.budget.min(floor);
+                self.club_mut(*team)?;
                 Ok(())
             }
             Event::StanceSet { team, stance } => {
@@ -790,35 +776,5 @@ fn owner_window(w: &World) -> Result<(), WorldError> {
         Ok(())
     } else {
         Err(WorldError::Phase(w.phase))
-    }
-}
-
-impl World {
-    /// A rescued club does not keep the payroll that broke it: the league
-    /// voids its dearest contracts, best paid first, until the payroll is
-    /// back at the floor. The players go to free agency and the club owes
-    /// nothing more on those deals.
-    fn receivership(&mut self, team: usize) {
-        let floor = self.rules.payroll_floor;
-        let mut paid: Vec<(f64, PlayerId)> = self.clubs[team]
-            .players
-            .iter()
-            .filter_map(|id| Some((self.players.get(id)?.contract?.salary, *id)))
-            .collect();
-        paid.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        let mut payroll: f64 = paid.iter().map(|(s, _)| s).sum();
-        for (salary, id) in paid {
-            if payroll <= floor {
-                break;
-            }
-            payroll -= salary;
-            self.clubs[team].players.remove(&id);
-            if let Some(p) = self.players.get_mut(&id) {
-                p.team = None;
-                p.contract = None;
-                p.free_years = 0;
-            }
-            self.free_agents.insert(id);
-        }
     }
 }

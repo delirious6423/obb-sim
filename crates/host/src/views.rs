@@ -500,7 +500,7 @@ pub(crate) fn owner_desk(w: &World, me: u8, stage: Stage, can_act: bool) -> Owne
         sold_out: o.sold_out(),
         suggested_ticket: owner_ticket_for(&o),
         ticket_range: TICKET_RANGE,
-        build_cost: "each $1M adds 0.05k seats and 1/600 quality, on credit (the line is 25M)"
+        build_cost: "each $1M adds 0.05k seats and 1/600 quality, paid from cash (cash may not go below zero)"
             .into(),
         stance: stance_view(c.stance),
         history,

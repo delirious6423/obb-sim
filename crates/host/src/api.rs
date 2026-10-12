@@ -574,7 +574,7 @@ pub struct LeagueView {
     pub total_cash: f64,
     pub median_payroll: f64,
     pub median_cash: f64,
-    /// Clubs with negative cash (running on the credit line).
+    /// Clubs with negative cash (in debt).
     pub low_cash: usize,
 }
 
