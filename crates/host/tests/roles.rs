@@ -178,6 +178,7 @@ fn gm_only_cannot_use_owner_or_commissioner_actions() {
         war_price: 5.0,
         draft_rounds: 2,
         international_rounds: 0,
+        economy: Default::default(),
     };
     assert!(refused(c.call(Request::Act(Action::SetRules { rules }))).contains("role"));
     // Nothing moved: the stage is still the draft.

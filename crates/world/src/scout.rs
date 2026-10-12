@@ -6,7 +6,7 @@
 
 use crate::player::{Level, Origin, Player};
 use crate::rating::Kind;
-use crate::state::{MIN_SALARY, World};
+use crate::state::World;
 use crate::util::noise;
 
 /// Runs per PA (batters) or per batter faced (pitchers) by which a
@@ -137,14 +137,14 @@ pub fn amateur_demand(w: &World, p: &Player) -> f64 {
         1.0
     };
     let n = noise(w.seed, MARKET_KEY + 1, u64::from(p.id.0), 0);
-    (0.15 * libm::exp(0.9 * ceiling + 0.3 * n) * premium).clamp(0.1, 8.0)
+    (0.15 * libm::exp(0.9 * ceiling + 0.3 * n) * premium).clamp(0.1, 8.0) * w.scale()
 }
 
 /// What the market asks per year for a player.
 #[must_use]
 pub fn asking_salary(w: &World, p: &Player) -> f64 {
     let war = war_of(p.kind, public_quality(w, p)).max(0.0);
-    (w.rules.war_price * war).max(MIN_SALARY)
+    (w.rules.war_price * war).max(w.min_salary())
 }
 
 /// Years the market offers.

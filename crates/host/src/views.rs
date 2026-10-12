@@ -6,12 +6,13 @@ use season::{Schedule, division_of, league_of};
 use world::agents::{ClubBooks, GmView, LeagueObs, OwnerObs, Seen, last_crowd, owner_ticket_for};
 use world::player::{Level as WLevel, Origin, Player, PlayerId};
 use world::rating::Kind;
-use world::state::{Phase, Rules, Stance as WStance, TEAMS, TICKET_RANGE, World};
+use world::state::{Phase, Rules, Stance as WStance, TEAMS, World};
 
 use crate::api::{
-    ClubBooksRow, Division, DraftView, FinanceRow, FinancesView, GameRow, LeagueView, Level,
-    OfferView, OwnerHistoryRow, OwnerView, PlayerRow, PlayerView, Position, RosterView, RuleLimits,
-    RulesView, ScheduleView, StadiumView, Stage, Stance, StandingRow, Standings, TradeView,
+    ClubBooksRow, Division, DraftView, EconomyView, FinanceRow, FinancesView, GameRow, LeagueView,
+    Level, OfferView, OwnerHistoryRow, OwnerView, PlayerRow, PlayerView, Position, RosterView,
+    RuleLimits, RulesView, ScheduleView, StadiumView, Stage, Stance, StandingRow, Standings,
+    TradeView,
 };
 
 pub(crate) fn level(l: WLevel) -> Level {
@@ -446,10 +447,18 @@ pub(crate) fn rules_view(r: &Rules) -> RulesView {
         war_price: r.war_price,
         draft_rounds: r.draft_rounds,
         international_rounds: r.international_rounds,
+        economy: EconomyView {
+            scale: r.scale,
+            inflation: r.inflation,
+            tax_line: r.tax_line,
+            tax_rate: r.tax_rate,
+        },
     }
 }
 
-pub(crate) fn rules_world(v: &RulesView) -> Rules {
+/// The rules a commissioner asks for. The price level is not theirs to set:
+/// it is taken from the rules in force (`now`).
+pub(crate) fn rules_world(v: &RulesView, now: &Rules) -> Rules {
     Rules {
         payroll_floor: v.payroll_floor,
         payroll_cap: v.payroll_cap,
@@ -457,6 +466,10 @@ pub(crate) fn rules_world(v: &RulesView) -> Rules {
         war_price: v.war_price,
         draft_rounds: v.draft_rounds,
         international_rounds: v.international_rounds,
+        scale: now.scale,
+        inflation: v.economy.inflation,
+        tax_line: v.economy.tax_line,
+        tax_rate: v.economy.tax_rate,
     }
 }
 
@@ -499,9 +512,11 @@ pub(crate) fn owner_desk(w: &World, me: u8, stage: Stage, can_act: bool) -> Owne
         gate_prev: o.gate_prev,
         sold_out: o.sold_out(),
         suggested_ticket: owner_ticket_for(&o),
-        ticket_range: TICKET_RANGE,
-        build_cost: "each $1M adds 0.05k seats and 1/600 quality, paid from cash (cash may not go below zero)"
-            .into(),
+        ticket_range: w.ticket_range(),
+        build_cost: format!(
+            "each ${:.2}M adds 0.05k seats and 1/600 quality, paid from cash (cash may not go below zero)",
+            w.scale()
+        ),
         stance: stance_view(c.stance),
         history,
     }
@@ -547,10 +562,13 @@ pub(crate) fn league_office(w: &World, stage: Stage, can_act: bool) -> LeagueVie
         stage,
         rules: rules_view(&w.rules),
         limits: RuleLimits {
-            payroll_floor: (40.0, 100.0),
-            payroll_cap: (w.rules.payroll_floor + 40.0, 420.0),
+            payroll_floor: (40.0 * w.scale(), 100.0 * w.scale()),
+            payroll_cap: (w.rules.payroll_floor + 40.0 * w.scale(), 420.0 * w.scale()),
             revenue_sharing: (0.0, 0.4),
-            war_price: (2.0, 9.0),
+            war_price: (
+                world::state::WAR_PRICE_RANGE.0 * w.scale(),
+                world::state::WAR_PRICE_RANGE.1 * w.scale(),
+            ),
         },
         can_act,
         total_payroll: books.iter().map(|b| b.payroll).sum(),

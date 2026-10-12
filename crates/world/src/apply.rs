@@ -3,8 +3,8 @@
 use crate::command::{ClubFinanceState, Event, Founding, Line, Outcome, WorldError};
 use crate::player::{Contract, Level, Player, PlayerId};
 use crate::state::{
-    CAPACITY_MAX, Draft, InSeason, MAJORS_PER_KIND, MINOR_COST, Phase, QUALITY_MAX,
-    ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, SeasonRecord, TICKET_RANGE, World,
+    CAPACITY_MAX, Draft, InSeason, MAJORS_PER_KIND, Phase, QUALITY_MAX, ROSTER_MAX_PER_KIND,
+    ROSTER_PER_KIND, SeasonRecord, World,
 };
 
 fn invalid<T>(msg: impl Into<String>) -> Result<T, WorldError> {
@@ -198,7 +198,8 @@ impl World {
                 if !club_ok(*team) {
                     return Err(WorldError::UnknownClub(*team));
                 }
-                if !price.is_finite() || *price < TICKET_RANGE.0 || *price > TICKET_RANGE.1 {
+                let (lo, hi) = self.ticket_range();
+                if !price.is_finite() || *price < lo * (1.0 - 1e-9) || *price > hi * (1.0 + 1e-9) {
                     return invalid("ticket price outside the allowed range");
                 }
             }
@@ -206,7 +207,10 @@ impl World {
                 if !club_ok(*team) {
                     return Err(WorldError::UnknownClub(*team));
                 }
-                if !amount.is_finite() || *amount <= 0.0 || *amount > 200.0 {
+                if !amount.is_finite()
+                    || *amount <= 0.0
+                    || *amount > self.build_max() * (1.0 + 1e-9)
+                {
                     return invalid("ballpark project outside the allowed size");
                 }
                 if self.clubs[usize::from(*team)].cash - amount < 0.0 {
@@ -410,10 +414,13 @@ impl World {
             }
             Event::StadiumBuilt { team, amount } => {
                 owner_window(self)?;
+                let scale = self.scale();
                 let c = self.club_mut(*team)?;
                 c.cash -= amount;
-                c.stadium.quality = (c.stadium.quality + amount / 600.0).min(QUALITY_MAX);
-                c.stadium.capacity = (c.stadium.capacity + 0.05 * amount).min(CAPACITY_MAX);
+                // Building costs move with the price level.
+                let real = amount / scale;
+                c.stadium.quality = (c.stadium.quality + real / 600.0).min(QUALITY_MAX);
+                c.stadium.capacity = (c.stadium.capacity + 0.05 * real).min(CAPACITY_MAX);
                 Ok(())
             }
             // Old saves only: rescues no longer happen and change nothing.
@@ -592,6 +599,7 @@ impl World {
             } => {
                 expect_phase(self, Phase::Drafting)?;
                 let year = self.year;
+                let minor = self.minor_cost();
                 let draft = self
                     .draft
                     .as_mut()
@@ -615,7 +623,7 @@ impl World {
                             p.team = Some(*team);
                             p.level = Level::Single;
                             p.contract = Some(Contract {
-                                salary: MINOR_COST,
+                                salary: minor,
                                 years: 6,
                             });
                         }

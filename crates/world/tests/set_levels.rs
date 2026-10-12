@@ -49,6 +49,7 @@ fn obs(cash: f64, owed: f64) -> GmObs {
         free_agents: Vec::new(),
         draft: None,
         trade: None,
+        money: Default::default(),
     }
 }
 

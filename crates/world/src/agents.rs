@@ -8,11 +8,11 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::command::Command;
-use crate::player::{Level, Origin, PlayerId, slot_bonus};
+use crate::player::{Level, Origin, PlayerId};
 use crate::rating::Kind;
 use crate::scout::{asking_salary, asking_years, opinion, war_of};
 use crate::state::{
-    CAPACITY_MAX, MAJORS_PER_KIND, MIN_SALARY, Phase, ROSTER_MAX_PER_KIND, Rules, Stadium, Stance,
+    CAPACITY_MAX, MAJORS_PER_KIND, Phase, ROSTER_MAX_PER_KIND, Rules, Stadium, Stance,
     TICKET_ELASTICITY, TICKET_RANGE, TICKET_REF, TradeOffer, World,
 };
 
@@ -174,6 +174,53 @@ pub struct GmObs {
     pub draft: Option<DraftObs>,
     /// Present only when trading is open and the observation asked for it.
     pub trade: Option<TradeObs>,
+    /// League money terms: price level, minimum salary, luxury tax.
+    #[serde(default)]
+    pub money: Money,
+}
+
+/// League money terms a general manager works with. Every amount in an
+/// observation is in current dollars; divide by `scale` to compare years.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Money {
+    /// The league price level (1.0 at founding).
+    pub scale: f64,
+    /// The league minimum salary.
+    pub min_salary: f64,
+    /// Payroll above which the club pays luxury tax at the next settlement
+    /// (0 when there is no tax).
+    pub tax_threshold: f64,
+    /// Seasons in a row the club has paid the tax (repeat payers pay more).
+    pub tax_years: u8,
+}
+
+impl Default for Money {
+    /// Founding terms, no tax.
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            min_salary: crate::state::MIN_SALARY,
+            tax_threshold: 0.0,
+            tax_years: 0,
+        }
+    }
+}
+
+impl Money {
+    /// The terms the league sets for `team` now.
+    #[must_use]
+    pub fn of(w: &World, team: u8) -> Self {
+        Self {
+            scale: w.scale(),
+            min_salary: w.min_salary(),
+            tax_threshold: w.tax_threshold(),
+            tax_years: w.clubs[usize::from(team)].tax_years,
+        }
+    }
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 impl GmObs {
@@ -189,7 +236,7 @@ impl GmObs {
     /// while it is short of a major-league staff of that kind.
     #[must_use]
     pub fn may_sign(&self, kind: Kind, ask: f64) -> bool {
-        let minimum = ask <= MIN_SALARY + 1e-9;
+        let minimum = ask <= self.money.min_salary + 1e-9;
         if self.in_debt() {
             return minimum
                 && self.roster.iter().filter(|s| s.kind == kind).count() < MAJORS_PER_KIND;
@@ -208,7 +255,7 @@ impl GmObs {
         }
         let mut best: Option<&Seen> = None;
         for f in self.free_agents.iter().filter(|f| f.kind == kind) {
-            if f.ask <= MIN_SALARY + 1e-9 {
+            if f.ask <= self.money.min_salary + 1e-9 {
                 return None;
             }
             if best.is_none_or(|b| f.ask < b.ask) {
@@ -283,11 +330,7 @@ impl<'a> GmView<'a> {
             return None;
         }
         let international = d.next >= d.amateur_picks;
-        let slot = if international {
-            1.0
-        } else {
-            slot_bonus((d.next + 1) as u16)
-        };
+        let slot = self.w.slot(d.next, international);
         Some(DraftObs {
             pick: d.next,
             ceiling: SIGNABLE * slot,
@@ -313,6 +356,7 @@ impl<'a> GmView<'a> {
             free_agents: self.w.free_agents.iter().map(|id| self.see(*id)).collect(),
             draft: self.draft(),
             trade: None,
+            money: Money::of(self.w, self.team),
         }
     }
 
@@ -471,7 +515,7 @@ pub fn short_fill_step(v: &GmObs) -> Option<Command> {
         v.short_fill(kind).map(|f| Command::SignFreeAgent {
             team: v.team,
             player: f.id,
-            salary: MIN_SALARY,
+            salary: v.money.min_salary,
             years: 1,
         })
     })
@@ -532,7 +576,7 @@ pub fn salary_dumps(v: &GmObs) -> Vec<Command> {
     let mut dear: Vec<&Seen> = v
         .roster
         .iter()
-        .filter(|s| s.salary > 2.0 * MIN_SALARY)
+        .filter(|s| s.salary > 2.0 * v.money.min_salary)
         .collect();
     dear.sort_by(|a, b| b.salary.total_cmp(&a.salary).then(a.id.cmp(&b.id)));
     // Partners that cannot take the salary or already have an offer.
@@ -558,7 +602,7 @@ pub fn salary_dumps(v: &GmObs) -> Vec<Command> {
             .iter()
             .filter(|h| {
                 h.seen.kind == x.kind
-                    && h.seen.salary <= MIN_SALARY + 1e-9
+                    && h.seen.salary <= v.money.min_salary + 1e-9
                     && h.seen.score() < x.score() - 2.0 * TRADE_MARGIN
                     && !used.contains(&h.club)
             })
@@ -676,9 +720,34 @@ pub struct OwnerObs {
     pub gate_prev: f64,
     #[serde(default)]
     pub stance: Stance,
+    /// The league price level (1.0 at founding); every amount here is in
+    /// current dollars.
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// The price level's yearly growth (the rules' inflation).
+    #[serde(default)]
+    pub inflation: f64,
+    /// Payroll above which the club pays luxury tax at the next settlement
+    /// (0 when there is no tax), and how many seasons in a row it has paid.
+    #[serde(default)]
+    pub tax_threshold: f64,
+    #[serde(default)]
+    pub tax_years: u8,
 }
 
 impl OwnerObs {
+    /// The reference ticket price in current dollars.
+    #[must_use]
+    pub fn ticket_ref(&self) -> f64 {
+        TICKET_REF * self.scale
+    }
+
+    /// Lowest and highest ticket price, current dollars.
+    #[must_use]
+    pub fn ticket_range(&self) -> (f64, f64) {
+        (TICKET_RANGE.0 * self.scale, TICKET_RANGE.1 * self.scale)
+    }
+
     #[must_use]
     pub fn new(w: &World, team: u8) -> Self {
         let c = &w.clubs[usize::from(team)];
@@ -700,6 +769,10 @@ impl OwnerObs {
             attendance_prev,
             gate_prev,
             stance: c.stance,
+            scale: w.scale(),
+            inflation: w.rules.inflation,
+            tax_threshold: w.tax_threshold(),
+            tax_years: c.tax_years,
         }
     }
 
@@ -729,18 +802,26 @@ pub fn last_crowd(w: &World, team: u8) -> (f64, f64) {
 /// earned last year and how much cash it holds.
 #[must_use]
 pub fn owner_budget_for(o: &OwnerObs) -> f64 {
-    let other = 80.0 + 10.0 * o.market + 0.1 * o.stadium.capacity * o.stadium.quality;
+    let other = crate::state::other_costs(o.market, &o.stadium, o.scale);
     let reserve = 0.2 * o.revenue_prev;
-    let cash_push = 0.25 * (o.cash - reserve).clamp(-80.0, 40.0);
+    let cash_push = 0.25 * (o.cash - reserve).clamp(-80.0 * o.scale, 40.0 * o.scale);
     let limit = crate::state::budget_limit_for(
         o.market,
         &o.stadium,
         o.revenue_prev,
         o.cash,
         o.payroll_floor,
+        o.scale,
     );
+    // Like most real owners, stay under the luxury-tax line.
+    let tax = if o.tax_threshold > 0.0 {
+        o.tax_threshold
+    } else {
+        f64::INFINITY
+    };
     (0.95 * o.revenue_prev - other + cash_push)
         .min(limit)
+        .min(tax)
         .clamp(o.payroll_floor, o.payroll_cap)
 }
 
@@ -759,17 +840,21 @@ pub fn owner_budget(w: &World, team: u8) -> Command {
 #[must_use]
 pub fn owner_ticket_for(o: &OwnerObs) -> f64 {
     let st = &o.stadium;
+    let now = o.ticket_ref();
+    // Last season's crowd came at last season's price level.
+    let then = now / (1.0 + o.inflation);
     let next = if o.attendance_prev <= 0.0 {
         st.ticket
     } else if o.sold_out() {
         st.ticket * 1.08
     } else {
-        let base = o.attendance_prev
-            / (libm::pow(st.ticket / TICKET_REF, -TICKET_ELASTICITY) * st.quality);
-        let fill = TICKET_REF * libm::pow(base * st.quality / st.capacity, 1.0 / TICKET_ELASTICITY);
-        0.5 * (st.ticket + fill)
+        let base =
+            o.attendance_prev / (libm::pow(st.ticket / then, -TICKET_ELASTICITY) * st.quality);
+        let fill = now * libm::pow(base * st.quality / st.capacity, 1.0 / TICKET_ELASTICITY);
+        0.5 * (st.ticket * (1.0 + o.inflation) + fill)
     };
-    next.clamp(TICKET_RANGE.0, TICKET_RANGE.1)
+    let (lo, hi) = o.ticket_range();
+    next.clamp(lo, hi)
 }
 
 /// A ballpark project (millions) when the park sells out at a high price and
@@ -778,12 +863,13 @@ pub fn owner_ticket_for(o: &OwnerObs) -> f64 {
 pub fn owner_build_for(o: &OwnerObs) -> Option<f64> {
     let st = &o.stadium;
     let spare = o.cash - 0.4 * o.revenue_prev;
+    let s = o.scale;
     if o.sold_out()
-        && st.ticket > 1.3 * TICKET_REF
+        && st.ticket > 1.3 * o.ticket_ref()
         && st.capacity < CAPACITY_MAX - 1.0
-        && spare > 20.0
+        && spare > 20.0 * s
     {
-        Some((0.25 * spare).clamp(10.0, 40.0))
+        Some((0.25 * spare).clamp(10.0 * s, 40.0 * s))
     } else {
         None
     }

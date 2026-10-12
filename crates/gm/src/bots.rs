@@ -6,7 +6,7 @@ use connect::{BuiltInGm, GmAction, GmAgent, GmStage, GmTurn};
 use world::agents::{Seen, salary_dumps};
 use world::player::Level;
 use world::rating::Kind;
-use world::state::{MAJORS_PER_KIND, MIN_SALARY, ROSTER_MAX_PER_KIND};
+use world::state::{MAJORS_PER_KIND, ROSTER_MAX_PER_KIND};
 
 fn room(t: &GmTurn, f: &Seen) -> bool {
     t.obs.may_sign(f.kind, f.ask)
@@ -62,7 +62,7 @@ impl GmAgent for Tanker {
         if turn.stage != GmStage::FreeAgency {
             return BuiltInGm.act(turn);
         }
-        best_now(turn, |f| f.ask <= MIN_SALARY + 1e-9)
+        best_now(turn, |f| f.ask <= turn.obs.money.min_salary + 1e-9)
             .map(|f| GmAction::Sign {
                 player: f.id,
                 salary: f.ask,

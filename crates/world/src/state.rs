@@ -134,6 +134,12 @@ impl InSeason {
 }
 
 /// League-wide rules set by the commissioner.
+///
+/// Money amounts (floor, cap, price per win) are nominal: in the dollars of
+/// the current season. `scale` is the league price level (1.0 at founding);
+/// each settlement indexes it, and the money amounts with it, by
+/// `inflation` (see [`Rules::indexed`]). Only the commissioner changes the
+/// other fields, by at most a step a year ([`Rules::check_change`]).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Rules {
     pub payroll_floor: f64,
@@ -143,12 +149,129 @@ pub struct Rules {
     pub war_price: f64,
     pub draft_rounds: u16,
     pub international_rounds: u16,
+    /// League price level: 1.0 at founding, multiplied by `1 + inflation` at
+    /// each settlement. Every money amount the league sets (revenue baselines,
+    /// minimum salary, ticket reference, draft bonuses, ballpark costs and the
+    /// money fields here) is its founding value times this.
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// Yearly growth of the price level.
+    #[serde(default = "default_inflation")]
+    pub inflation: f64,
+    /// Luxury-tax threshold as a multiple of the league's average payroll
+    /// (so it moves with the price level). 0 switches the tax off.
+    #[serde(default = "default_tax_line")]
+    pub tax_line: f64,
+    /// Base tax rate on payroll above the threshold for a first-time payer;
+    /// the rate rises for repeat payers and large overages (see [`luxury_tax`]).
+    #[serde(default = "default_tax_rate")]
+    pub tax_rate: f64,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+/// MLB average salary grew about 3.9% a year 2000-2023 (MLBPA: 1.90M to
+/// 4.53M) and 3.2% a year 2010-2023 (3.01M to 4.53M); league revenue grew
+/// about 6.0% a year 2002-2019 (3.7bn to 10.4bn) and about 2.5% a year
+/// 2019-2024 (10.7bn to 12.1bn). 3.5% sits between the salary series.
+pub const DEFAULT_INFLATION: f64 = 0.0;
+/// Highest yearly inflation the commissioner may set.
+pub const INFLATION_MAX: f64 = 0.08;
+
+fn default_inflation() -> f64 {
+    DEFAULT_INFLATION
+}
+
+/// 2024 competitive-balance-tax threshold 237M over an average opening-day
+/// payroll of about 162.5M (sum of the AP opening-day list / 30): 1.46.
+pub const DEFAULT_TAX_LINE: f64 = 1.46;
+
+fn default_tax_line() -> f64 {
+    DEFAULT_TAX_LINE
+}
+
+/// 2022-26 CBA: 20% for a first-time payer (30% the second year in a row,
+/// 50% from the third; see [`luxury_tax`]).
+pub const DEFAULT_TAX_RATE: f64 = 0.20;
+
+fn default_tax_rate() -> f64 {
+    DEFAULT_TAX_RATE
+}
+
+/// Lowest and highest price per win the commissioner may set, founding
+/// millions. Free agents cost about 9-10M per WAR in real markets (FanGraphs
+/// $/WAR: 9.0M 2014-16; about 10.2M 2023 and 8.9M 2024).
+pub const WAR_PRICE_RANGE: (f64, f64) = (2.0, 20.0);
+/// Lowest and highest luxury-tax line, times the average payroll.
+pub const TAX_LINE_RANGE: (f64, f64) = (1.1, 3.0);
+
+/// Luxury tax owed on a payroll (nominal millions) over `line`, by a club
+/// that has paid it `years_before` seasons in a row before this one. MLB's
+/// competitive-balance tax (2022-26 CBA): base rate 20% / 30% / 50% for the
+/// first, second and third-or-later consecutive year over; surcharges of 12
+/// points on the part 20-40M over, 42.5 points (45 for repeat payers) on the
+/// part 40-60M over and 60 points beyond 60M over. The dollar tiers are set
+/// against the 2024 line of 237M, so here they are fractions of the line.
+/// `base` scales the base rates (0.20 gives MLB's).
+#[must_use]
+pub fn luxury_tax(payroll: f64, line: f64, base: f64, years_before: u8) -> f64 {
+    if line <= 0.0 || payroll <= line {
+        return 0.0;
+    }
+    let over = payroll - line;
+    let rate = base
+        * match years_before {
+            0 => 1.0,
+            1 => 1.5,
+            _ => 2.5,
+        };
+    let tier = |lo: f64, hi: f64| (over.min(hi * line) - lo * line).max(0.0);
+    let (t1, t2, t3) = (20.0 / 237.0, 40.0 / 237.0, 60.0 / 237.0);
+    let second = if years_before == 0 { 0.425 } else { 0.45 };
+    rate * over + 0.12 * tier(t1, t2) + second * tier(t2, t3) + 0.60 * tier(t3, f64::INFINITY)
 }
 
 impl Rules {
+    /// The rules one year of inflation later: the price level and every
+    /// money amount grow by `inflation`; nothing else changes.
+    #[must_use]
+    pub fn indexed(&self) -> Rules {
+        let g = 1.0 + self.inflation;
+        Rules {
+            payroll_floor: self.payroll_floor * g,
+            payroll_cap: self.payroll_cap * g,
+            war_price: self.war_price * g,
+            scale: self.scale * g,
+            ..self.clone()
+        }
+    }
+
+    /// Whether `next` is exactly these rules indexed once (what a settlement
+    /// may carry).
+    #[must_use]
+    pub fn is_indexing(&self, next: &Rules) -> bool {
+        let want = self.indexed();
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b.abs().max(1.0);
+        close(next.payroll_floor, want.payroll_floor)
+            && close(next.payroll_cap, want.payroll_cap)
+            && close(next.war_price, want.war_price)
+            && close(next.scale, want.scale)
+            && Rules {
+                payroll_floor: want.payroll_floor,
+                payroll_cap: want.payroll_cap,
+                war_price: want.war_price,
+                scale: want.scale,
+                ..next.clone()
+            } == want
+    }
+
     /// Whether the change from `old` to `self` is gradual enough: the league
     /// gives clubs notice, so limits move by at most a tenth a year (revenue
-    /// sharing by 0.04, draft rounds by 2).
+    /// sharing by 0.04, draft rounds by 2, inflation by 0.01, the tax rate
+    /// by 0.05; the tax may be switched off, or on at its lowest line, at
+    /// once). The price level is not the commissioner's to set.
     ///
     /// # Errors
     /// The first limit that moves too far.
@@ -168,29 +291,70 @@ impl Rules {
         {
             return Err("draft rounds may change by at most 2 a year".into());
         }
+        if (self.scale - old.scale).abs() > 1e-9 * old.scale {
+            return Err("the price level moves only with inflation".into());
+        }
+        if (self.inflation - old.inflation).abs() > 0.01 + 1e-9 {
+            return Err("inflation may move at most 0.01 a year".into());
+        }
+        let line_ok = within(self.tax_line, old.tax_line)
+            || self.tax_line == 0.0
+            || (old.tax_line == 0.0 && (self.tax_line - TAX_LINE_RANGE.0).abs() < 1e-9);
+        if !line_ok || (self.tax_rate - old.tax_rate).abs() > 0.05 + 1e-9 {
+            return Err("the tax line may move at most 10% a year and the tax rate 0.05".into());
+        }
         Ok(())
     }
 
-    /// Whether the rules are inside the limits a commissioner may set.
+    /// Whether the rules are inside the limits a commissioner may set. The
+    /// money limits are founding amounts times the price level.
     ///
     /// # Errors
     /// The first limit that is broken.
     pub fn check(&self) -> Result<(), String> {
         let ok = |x: f64, lo: f64, hi: f64| x.is_finite() && (lo..=hi).contains(&x);
-        if !ok(self.payroll_floor, 40.0, 100.0) {
-            return Err("payroll floor must be between 40 and 100".into());
+        if !(self.scale.is_finite() && self.scale > 0.0 && self.scale < 1e9) {
+            return Err("the price level must be a positive number".into());
         }
-        if !ok(self.payroll_cap, self.payroll_floor + 40.0, 420.0) {
-            return Err("payroll cap must be 40 to 420 and 40 above the floor".into());
+        let s = self.scale;
+        if !ok(self.payroll_floor, 40.0 * s, 100.0 * s) {
+            return Err(format!(
+                "payroll floor must be between {:.1} and {:.1}",
+                40.0 * s,
+                100.0 * s
+            ));
+        }
+        if !ok(self.payroll_cap, self.payroll_floor + 40.0 * s, 420.0 * s) {
+            return Err(format!(
+                "payroll cap must be at most {:.1} and {:.1} above the floor",
+                420.0 * s,
+                40.0 * s
+            ));
         }
         if !ok(self.revenue_sharing, 0.0, 0.4) {
             return Err("revenue sharing must be between 0 and 0.4".into());
         }
-        if !ok(self.war_price, 2.0, 9.0) {
-            return Err("price per win must be between 2 and 9".into());
+        if !ok(self.war_price, WAR_PRICE_RANGE.0 * s, WAR_PRICE_RANGE.1 * s) {
+            return Err(format!(
+                "price per win must be between {:.1} and {:.1}",
+                WAR_PRICE_RANGE.0 * s,
+                WAR_PRICE_RANGE.1 * s
+            ));
         }
         if !(1..=30).contains(&self.draft_rounds) || self.international_rounds > 15 {
             return Err("draft rounds must be 1 to 30 and international rounds up to 15".into());
+        }
+        if !ok(self.inflation, 0.0, INFLATION_MAX) {
+            return Err(format!("inflation must be between 0 and {INFLATION_MAX}"));
+        }
+        if !(self.tax_line == 0.0 || ok(self.tax_line, TAX_LINE_RANGE.0, TAX_LINE_RANGE.1)) {
+            return Err(format!(
+                "the tax line must be 0 (no tax) or {} to {} times the average payroll",
+                TAX_LINE_RANGE.0, TAX_LINE_RANGE.1
+            ));
+        }
+        if !ok(self.tax_rate, 0.0, 0.5) {
+            return Err("the tax rate must be between 0 and 0.5".into());
         }
         Ok(())
     }
@@ -202,9 +366,13 @@ impl Default for Rules {
             payroll_floor: 70.0,
             payroll_cap: 240.0,
             revenue_sharing: 0.12,
-            war_price: 4.4,
+            war_price: 9.5,
             draft_rounds: 10,
             international_rounds: 5,
+            scale: 1.0,
+            inflation: DEFAULT_INFLATION,
+            tax_line: 0.0,
+            tax_rate: DEFAULT_TAX_RATE,
         }
     }
 }
@@ -217,16 +385,50 @@ pub fn budget_limit_for(
     revenue_prev: f64,
     cash: f64,
     floor: f64,
+    scale: f64,
 ) -> f64 {
     if cash < 0.0 {
         // A club in debt is held to the floor until the debt is paid.
         return floor;
     }
-    let other = 80.0 + 10.0 * market + 0.1 * st.capacity * st.quality;
-    (revenue_prev - other + 0.5 * cash).max(floor)
+    (revenue_prev - other_costs(market, st, scale) + 0.5 * cash).max(floor)
 }
 
-/// Average ticket price the demand curve is anchored to, dollars.
+// ---- money ------------------------------------------------------------
+//
+// Founding amounts (price level 1.0), in millions, anchored to MLB 2023-24:
+// league revenue 12.1bn in 2024 (Forbes), about 403M a club; opening-day
+// payroll about 162.5M a club (AP 2024 list), so payroll is about 40% of
+// revenue (45-50% with benefits and the 40-man roster); league EBITDA margin
+// about 5%. Free agents cost about 9-10M per WAR (FanGraphs). The minimum
+// salary is 0.74M (2024 CBA).
+
+/// Local revenue (gate, local media, sponsorship) of an average market at
+/// average fan interest, before revenue sharing.
+pub const LOCAL_REVENUE: f64 = 210.0;
+/// Revenue every club gets from the league's national contracts.
+pub const NATIONAL_REVENUE: f64 = 140.0;
+/// Extra revenue per playoff series played.
+pub const PLAYOFF_SERIES_REVENUE: f64 = 7.5;
+/// Fixed costs other than player payroll (staff, minor leagues, operations).
+pub const OTHER_FIXED: f64 = 95.0;
+/// Further other costs per unit of market size.
+pub const OTHER_MARKET: f64 = 75.0;
+
+/// A club's yearly costs other than player payroll (nominal millions).
+#[must_use]
+pub fn other_costs(market: f64, st: &Stadium, scale: f64) -> f64 {
+    scale * (OTHER_FIXED + OTHER_MARKET * market) + 0.1 * st.capacity * st.quality * scale
+}
+
+/// What an average season of a club in this market earns, founding millions
+/// (opening books).
+#[must_use]
+pub fn expected_revenue(market: f64) -> f64 {
+    LOCAL_REVENUE * market + NATIONAL_REVENUE
+}
+
+/// Average ticket price the demand curve is anchored to, founding dollars.
 pub const TICKET_REF: f64 = 35.0;
 /// How fast attendance falls as the ticket price rises (a constant elasticity).
 pub const TICKET_ELASTICITY: f64 = 1.5;
@@ -236,6 +438,8 @@ pub const GATE_SHARE: f64 = 0.55;
 pub const HOME_GAMES: f64 = 81.0;
 /// Lowest and highest ticket price an owner may set, dollars.
 pub const TICKET_RANGE: (f64, f64) = (12.0, 150.0);
+/// Largest ballpark project in one offseason, founding millions.
+pub const BUILD_MAX: f64 = 200.0;
 /// Largest ballpark, thousands of seats.
 pub const CAPACITY_MAX: f64 = 70.0;
 /// Best ballpark quality (a demand multiplier).
@@ -265,10 +469,11 @@ impl Stadium {
     }
 
     /// Average crowd per home game (thousands) given what the market would
-    /// bring to a park of average quality at the reference price.
+    /// bring to a park of average quality at the reference price `ticket_ref`
+    /// (nominal: [`TICKET_REF`] times the price level).
     #[must_use]
-    pub fn crowd(&self, base: f64) -> f64 {
-        let demand = base * libm::pow(self.ticket / TICKET_REF, -TICKET_ELASTICITY) * self.quality;
+    pub fn crowd(&self, base: f64, ticket_ref: f64) -> f64 {
+        let demand = base * libm::pow(self.ticket / ticket_ref, -TICKET_ELASTICITY) * self.quality;
         demand.min(self.capacity)
     }
 }
@@ -320,6 +525,10 @@ pub struct ClubState {
     pub stadium: Stadium,
     #[serde(default)]
     pub stance: Stance,
+    /// Consecutive seasons up to the last settlement in which the club paid
+    /// luxury tax (repeat payers pay higher rates).
+    #[serde(default)]
+    pub tax_years: u8,
 }
 
 /// A trade one club has put to another and the other has not yet answered.
@@ -391,6 +600,12 @@ pub struct Finance {
     /// below the credit line. Always false now (debt carries over).
     #[serde(default)]
     pub rescued: bool,
+    /// Luxury tax paid on this season's payroll.
+    #[serde(default)]
+    pub tax: f64,
+    /// This club's share of the league's luxury-tax receipts.
+    #[serde(default)]
+    pub tax_share: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -489,7 +704,7 @@ impl World {
                 continue;
             }
             let ask = crate::scout::asking_salary(self, p);
-            if ask <= MIN_SALARY + 1e-9 {
+            if ask <= self.min_salary() + 1e-9 {
                 return None;
             }
             if best.is_none_or(|(a, _)| ask < a) {
@@ -511,7 +726,69 @@ impl World {
             c.revenue_prev,
             c.cash,
             self.rules.payroll_floor,
+            self.scale(),
         )
+    }
+
+    /// The league price level (1.0 at founding; see [`Rules::scale`]).
+    #[must_use]
+    pub fn scale(&self) -> f64 {
+        self.rules.scale
+    }
+
+    /// The league minimum salary in current dollars.
+    #[must_use]
+    pub fn min_salary(&self) -> f64 {
+        MIN_SALARY * self.scale()
+    }
+
+    /// Yearly cost of a minor-league contract in current dollars.
+    #[must_use]
+    pub fn minor_cost(&self) -> f64 {
+        MINOR_COST * self.scale()
+    }
+
+    /// The reference ticket price in current dollars.
+    #[must_use]
+    pub fn ticket_ref(&self) -> f64 {
+        TICKET_REF * self.scale()
+    }
+
+    /// Lowest and highest ticket price an owner may set, current dollars.
+    #[must_use]
+    pub fn ticket_range(&self) -> (f64, f64) {
+        (TICKET_RANGE.0 * self.scale(), TICKET_RANGE.1 * self.scale())
+    }
+
+    /// Largest ballpark project in one offseason, current millions.
+    #[must_use]
+    pub fn build_max(&self) -> f64 {
+        BUILD_MAX * self.scale()
+    }
+
+    /// The luxury-tax threshold for the next settlement (nominal millions; 0
+    /// when the tax is off). Like MLB's, it is known before the season: the
+    /// rules' multiple of the league's average payroll at the last
+    /// settlement, indexed by a year of inflation (the settlement indexes
+    /// prices after it books payrolls). Before any settlement, of the
+    /// average payroll now.
+    #[must_use]
+    pub fn tax_threshold(&self) -> f64 {
+        if self.rules.tax_line <= 0.0 || self.clubs.is_empty() {
+            return 0.0;
+        }
+        let n = self.clubs.len() as f64;
+        let last: Vec<f64> = self
+            .finances
+            .iter()
+            .filter_map(|f| f.last().map(|x| x.payroll))
+            .collect();
+        let avg = if last.len() == self.clubs.len() {
+            last.iter().sum::<f64>() / n * (1.0 + self.rules.inflation)
+        } else {
+            (0..self.clubs.len()).map(|t| self.payroll(t)).sum::<f64>() / n
+        };
+        self.rules.tax_line * avg
     }
 
     /// What is wrong with a club's roster for starting a season (nothing, if
@@ -706,6 +983,7 @@ impl World {
         {
             return bad("the season under way does not match the clubs");
         }
+        let scale = s.rules.scale;
         if s.clubs.iter().any(|c| {
             let st = &c.stadium;
             !(st.capacity.is_finite()
@@ -713,7 +991,8 @@ impl World {
                 && st.ticket.is_finite()
                 && (1.0..=CAPACITY_MAX).contains(&st.capacity)
                 && (0.1..=QUALITY_MAX).contains(&st.quality)
-                && (TICKET_RANGE.0..=TICKET_RANGE.1).contains(&st.ticket))
+                && (TICKET_RANGE.0 * scale * (1.0 - 1e-9)..=TICKET_RANGE.1 * scale * (1.0 + 1e-9))
+                    .contains(&st.ticket))
         }) || (s.phase != Phase::Unfounded && s.rules.check().is_err())
         {
             return bad("a ballpark or the rules are outside their limits");

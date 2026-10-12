@@ -83,10 +83,42 @@ pub struct RulesView {
     pub payroll_cap: f64,
     /// Share of local revenue pooled and shared (0..0.4).
     pub revenue_sharing: f64,
-    /// Millions paid per win above replacement (2..9).
+    /// Millions paid per win above replacement (2..20 times the price level).
     pub war_price: f64,
     pub draft_rounds: u16,
     pub international_rounds: u16,
+    /// Price level, inflation and luxury tax.
+    #[serde(default)]
+    pub economy: EconomyView,
+}
+
+/// The league's money terms. Every amount the host shows is in current
+/// dollars; `scale` is the price level (1.0 at founding), so an amount
+/// divided by it is in founding dollars.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EconomyView {
+    /// Price level (read only: it grows by `inflation` at each settlement).
+    pub scale: f64,
+    /// Yearly growth of the price level (0..0.08; moves at most 0.01 a year).
+    pub inflation: f64,
+    /// Luxury-tax threshold as a multiple of the average payroll (0 = no
+    /// tax, else 1.1..3.0).
+    pub tax_line: f64,
+    /// Base luxury-tax rate for a first-time payer (0..0.5; repeat payers
+    /// pay 1.5x and 2.5x, plus surcharges on large overages).
+    pub tax_rate: f64,
+}
+
+impl Default for EconomyView {
+    fn default() -> Self {
+        let r = world::state::Rules::default();
+        Self {
+            scale: r.scale,
+            inflation: r.inflation,
+            tax_line: r.tax_line,
+            tax_rate: r.tax_rate,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

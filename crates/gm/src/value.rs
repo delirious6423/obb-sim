@@ -4,7 +4,6 @@ use world::agents::{GmObs, Seen};
 use world::player::{Level, deficit};
 use world::rating::Kind;
 use world::scout::{quality_from_war, war_of};
-use world::state::MIN_SALARY;
 use world::util::noise;
 
 use crate::profile::Profile;
@@ -23,6 +22,8 @@ pub struct Est {
 pub struct Context {
     pub sd: [f64; 2],
     pub war_price: f64,
+    /// The league minimum salary (current dollars).
+    pub min_salary: f64,
     pub year: i32,
     seed: u64,
 }
@@ -55,6 +56,7 @@ impl Context {
         Self {
             sd,
             war_price: obs.war_price,
+            min_salary: obs.money.min_salary,
             year: obs.year,
             seed,
         }
@@ -69,7 +71,7 @@ impl Context {
         let year = self.year as u64;
         let own = s.now + p.extra_noise * sd * noise(self.seed, 0xE5, id, year * 2);
         let peak = s.peak + p.extra_noise * sd * noise(self.seed, 0xE5, id, year * 2 + 1);
-        let q = if s.ask > MIN_SALARY + 1e-9 && p.market_weight > 0.0 {
+        let q = if s.ask > self.min_salary + 1e-9 && p.market_weight > 0.0 {
             let market = quality_from_war(s.kind, s.ask / self.war_price);
             (1.0 - p.market_weight) * own + p.market_weight * market
         } else {

@@ -438,7 +438,7 @@ impl Host {
             }
             Action::SetRules { rules } => {
                 return self.commissioner_act(Command::SetRules {
-                    rules: views::rules_world(&rules),
+                    rules: views::rules_world(&rules, &self.world.rules),
                 });
             }
             other => other,

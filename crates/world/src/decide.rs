@@ -12,9 +12,9 @@ use crate::player::{
 use crate::rating::{Kind, Model, normal, uniform};
 use crate::scout::asking_salary;
 use crate::state::{
-    ClubState, Finance, GATE_SHARE, HOME_GAMES, MAJORS_PER_KIND, MIN_SALARY, OFFERS_PER_CLUB,
-    Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules, Stadium, Stance, TEAMS, TICKET_RANGE,
-    TICKET_REF, TRADE_MAX_PER_SIDE, World,
+    ClubState, Finance, GATE_SHARE, HOME_GAMES, LOCAL_REVENUE, MAJORS_PER_KIND, NATIONAL_REVENUE,
+    OFFERS_PER_CLUB, PLAYOFF_SERIES_REVENUE, Phase, ROSTER_MAX_PER_KIND, ROSTER_PER_KIND, Rules,
+    Stadium, Stance, TEAMS, TRADE_MAX_PER_SIDE, World, expected_revenue, other_costs,
 };
 use crate::util::{stream, tag};
 
@@ -117,6 +117,17 @@ impl World {
             w.apply(e)?;
         }
         Ok(w)
+    }
+
+    /// Signing-bonus slot (current millions) of the pick at index `pick`.
+    #[must_use]
+    pub fn slot(&self, pick: usize, international: bool) -> f64 {
+        let founding = if international {
+            INTERNATIONAL_SLOT
+        } else {
+            slot_bonus((pick + 1) as u16)
+        };
+        founding * self.scale()
     }
 
     fn need(&self, phase: Phase) -> Result<(), WorldError> {
@@ -297,10 +308,14 @@ impl World {
             Command::SetTicketPrice { team, price } => {
                 self.check_team(*team)?;
                 self.check_owner_window()?;
-                if !price.is_finite() || *price < TICKET_RANGE.0 || *price > TICKET_RANGE.1 {
+                if !price.is_finite()
+                    || *price < self.ticket_range().0
+                    || *price > self.ticket_range().1
+                {
                     return Err(WorldError::Invalid(format!(
-                        "ticket price must be between {} and {}",
-                        TICKET_RANGE.0, TICKET_RANGE.1
+                        "ticket price must be between {:.2} and {:.2}",
+                        self.ticket_range().0,
+                        self.ticket_range().1
                     )));
                 }
                 Ok(vec![Event::TicketSet {
@@ -311,10 +326,11 @@ impl World {
             Command::BuildStadium { team, amount } => {
                 self.check_team(*team)?;
                 self.check_owner_window()?;
-                if !amount.is_finite() || *amount <= 0.0 || *amount > 200.0 {
-                    return Err(WorldError::Invalid(
-                        "a ballpark project costs more than 0 and at most 200".into(),
-                    ));
+                if !amount.is_finite() || *amount <= 0.0 || *amount > self.build_max() {
+                    return Err(WorldError::Invalid(format!(
+                        "a ballpark project costs more than 0 and at most {:.1}",
+                        self.build_max()
+                    )));
                 }
                 if self.clubs[usize::from(*team)].cash - amount < 0.0 {
                     return Err(WorldError::Invalid(
@@ -423,13 +439,9 @@ impl World {
                 if intl_round != (p.origin == Origin::International) {
                     return Err(WorldError::Invalid("wrong pool for this round".into()));
                 }
-                let slot = if intl_round {
-                    INTERNATIONAL_SLOT
-                } else {
-                    slot_bonus((d.next + 1) as u16)
-                };
+                let slot = self.slot(d.next, intl_round);
                 let demand = crate::scout::amateur_demand(self, p);
-                let bonus = (demand <= 1.5 * slot).then_some(demand.max(0.1));
+                let bonus = (demand <= 1.5 * slot).then_some(demand.max(0.1 * self.scale()));
                 if bonus.is_some() && self.in_debt(*team) {
                     return Err(WorldError::Invalid(
                         "a club in debt cannot sign draftees".into(),
@@ -478,9 +490,9 @@ impl World {
                 // A club short of a staff may fill it at the minimum when no
                 // free agent of the kind asks the minimum (see `short_fill`).
                 let least = if self.short_fill(*team, p.kind) == Some(*player) {
-                    MIN_SALARY
+                    self.min_salary()
                 } else {
-                    asking_salary(self, p).max(MIN_SALARY)
+                    asking_salary(self, p).max(self.min_salary())
                 };
                 if !salary.is_finite() || *salary < least - 1e-9 {
                     return Err(WorldError::Invalid(
@@ -488,7 +500,7 @@ impl World {
                     ));
                 }
                 if self.in_debt(*team)
-                    && !(*salary <= MIN_SALARY + 1e-9
+                    && !(*salary <= self.min_salary() + 1e-9
                         && self.kind_count(*team, p.kind, None) < MAJORS_PER_KIND)
                 {
                     return Err(WorldError::Invalid(
@@ -498,12 +510,12 @@ impl World {
                 }
                 let after = self.payroll(usize::from(*team)) + salary;
                 let budget = self.clubs[usize::from(*team)].budget;
-                if after > budget + 1e-9 && *salary > MIN_SALARY + 1e-9 {
+                if after > budget + 1e-9 && *salary > self.min_salary() + 1e-9 {
                     return Err(WorldError::Invalid(
                         "over the owner's payroll budget".into(),
                     ));
                 }
-                if after > self.rules.payroll_cap + 1e-9 && *salary > MIN_SALARY + 1e-9 {
+                if after > self.rules.payroll_cap + 1e-9 && *salary > self.min_salary() + 1e-9 {
                     return Err(WorldError::Invalid("over the payroll cap".into()));
                 }
                 Ok(vec![Event::FreeAgentSigned {
@@ -555,6 +567,8 @@ impl World {
 
     fn settle(&self) -> Event {
         let n = self.clubs.len();
+        let scale = self.scale();
+        let ticket_ref = self.ticket_ref();
         let mut hype = vec![0.0; n];
         let mut local = vec![0.0; n];
         let mut crowd = vec![0.0; n];
@@ -567,10 +581,11 @@ impl World {
                 (0.6 * self.clubs[i].hype + 0.4 * (1.0 + 4.0 * (win_pct[i] - 0.5))).clamp(0.4, 1.8);
             // What the market is worth this year; gate receipts are the
             // part the owner can move with the ticket price and the park.
-            let market_local = 190.0 * self.clubs[i].market * (0.75 + 0.5 * hype[i]);
-            let base = GATE_SHARE * market_local * 1000.0 / (HOME_GAMES * TICKET_REF);
+            let market_local =
+                LOCAL_REVENUE * scale * self.clubs[i].market * (0.75 + 0.5 * hype[i]);
+            let base = GATE_SHARE * market_local * 1000.0 / (HOME_GAMES * ticket_ref);
             let st = &self.clubs[i].stadium;
-            crowd[i] = st.crowd(base);
+            crowd[i] = st.crowd(base, ticket_ref);
             gate[i] = crowd[i] * HOME_GAMES * st.ticket / 1000.0;
             local[i] = (1.0 - GATE_SHARE) * market_local + gate[i];
         }
@@ -586,11 +601,11 @@ impl World {
         for i in 0..n {
             let revenue = local[i] * (1.0 - self.rules.revenue_sharing)
                 + pool / n as f64
-                + 85.0
-                + 6.0 * f64::from(appearances[i]);
+                + NATIONAL_REVENUE * scale
+                + PLAYOFF_SERIES_REVENUE * scale * f64::from(appearances[i]);
             let payroll = self.payroll(i);
             let st = &self.clubs[i].stadium;
-            let other = 80.0 + 10.0 * self.clubs[i].market + 0.1 * st.capacity * st.quality;
+            let other = other_costs(self.clubs[i].market, st, scale);
             let profit = revenue - payroll - other;
             let cash = self.clubs[i].cash;
             // A club that came into the year in debt pays its owners nothing:
@@ -610,6 +625,8 @@ impl World {
                     attendance: crowd[i],
                     gate: gate[i],
                     rescued: false,
+                    tax: 0.0,
+                    tax_share: 0.0,
                 },
                 ClubFinanceState {
                     // Debt carries over: there is no rescue.
@@ -790,7 +807,7 @@ impl World {
         let rules = Rules::default();
         let clubs: Vec<ClubState> = (0..TEAMS)
             .map(|t| {
-                let expected = 190.0 * markets[t] + 85.0;
+                let expected = expected_revenue(markets[t]);
                 ClubState {
                     name: format!("{} {}", CITIES[t % 15], MASCOTS[(t / 15 + t) % 15]),
                     market: markets[t],
@@ -804,6 +821,7 @@ impl World {
                     tactics: Default::default(),
                     stadium: Stadium::for_market(markets[t]),
                     stance: Stance::default(),
+                    tax_years: 0,
                 }
             })
             .collect();
@@ -818,7 +836,7 @@ impl World {
         // The burn-in earns no revenue, so the founders restore each club's
         // opening cash rather than hand over whatever the draft left.
         for c in &mut scratch.clubs {
-            c.cash = 0.2 * (190.0 * c.market + 85.0);
+            c.cash = 0.2 * expected_revenue(c.market);
         }
         Event::Founded(Box::new(Founding {
             year: scratch.year,
