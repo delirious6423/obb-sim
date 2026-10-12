@@ -630,7 +630,11 @@ impl Host {
         let mut moved = 0;
         for t in 0..TEAMS as u8 {
             let budget = self.world.clubs[usize::from(t)].budget;
-            let top = self.world.rules.payroll_cap.min(self.world.budget_limit(usize::from(t)));
+            let top = self
+                .world
+                .rules
+                .payroll_cap
+                .min(self.world.budget_limit(usize::from(t)));
             let fit = budget.clamp(floor, top);
             if fit != budget {
                 self.world
@@ -824,6 +828,9 @@ impl Host {
             serde_json::to_string(&self.roles).map_err(|e| e.to_string())?,
         );
         data.meta.insert("data".into(), "params-1".into());
+        data.meta
+            .insert("calibration".into(), calibration_id(&self.cal));
+        data.meta.insert("engine".into(), ENGINE_VERSION.into());
         Ok(data)
     }
 
@@ -898,6 +905,17 @@ impl Host {
             .get("difficulty")
             .and_then(|d| serde_json::from_str(d).ok())
             .ok_or("the save has no difficulty")?;
+        // A league built on other calibration data would play differently
+        // from the one that was saved, so refuse it. Saves from before the
+        // key existed carry no id and are not refused.
+        if let Some(saved) = meta.get("calibration") {
+            let here = calibration_id(cal);
+            if *saved != here {
+                return Err(format!(
+                    "the save was made with other calibration data ({saved}); this build has {here}"
+                ));
+            }
+        }
         let smart = meta.get("smart_tactics").is_some_and(|s| s == "true");
         // Saves from before roles existed were general manager games.
         let roles: Roles = match meta.get("roles") {
@@ -922,6 +940,11 @@ impl Host {
             },
         });
         let mut notices = vec!["Game loaded.".to_string()];
+        if let Some(engine) = meta.get("engine").filter(|e| e.as_str() != ENGINE_VERSION) {
+            notices.push(format!(
+                "The save was made by {engine}; this is {ENGINE_VERSION}. Results may differ."
+            ));
+        }
         if loaded.used_backup {
             notices.push("The save was damaged; the previous copy was loaded.".into());
         }
@@ -1011,10 +1034,87 @@ fn ordinal(n: usize) -> String {
     format!("{n}{suffix}")
 }
 
+/// The identity of the calibration data a league was built on.
+fn calibration_id(cal: &Calibration) -> String {
+    format!("{} | {} PA", cal.source, cal.pa)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::{Difficulty, NewGame, Preset};
+    use storage::{SaveKind, SlotId};
+
+    fn saved_game(dir: &std::path::Path, tag: &str) -> (Host, LocalStore) {
+        let store = LocalStore::open(dir.join(tag)).expect("store");
+        let mut h = session(Roles::default());
+        h.store = Some(store);
+        let resp = h.save("slot", SaveKind::Manual);
+        assert!(matches!(resp, Response::Done(_)), "{resp:?}");
+        let store = h.store.take().expect("store");
+        (h, store)
+    }
+
+    #[test]
+    fn a_save_from_other_calibration_data_is_refused() {
+        let dir = std::env::temp_dir().join(format!("host-cal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (_, store) = saved_game(&dir, "mismatch");
+        let cal = crate::data::calibration();
+        assert!(Host::from_save(&cal, &store, "slot").is_ok());
+        let mut other = cal.clone();
+        other.pa += 1;
+        let e = Host::from_save(&other, &store, "slot")
+            .err()
+            .expect("other calibration must be refused");
+        assert!(e.contains("calibration"), "{e}");
+    }
+
+    #[test]
+    fn an_older_engine_version_loads_with_a_notice() {
+        let dir = std::env::temp_dir().join(format!("host-eng-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (h, store) = saved_game(&dir, "engine");
+        let id = SlotId::new("slot").expect("slot");
+        let mut data = h.save_data().expect("data");
+        data.meta
+            .insert("engine".into(), "sim 0.0.1 / rules 0".into());
+        store
+            .save(&id, h.manifest(SaveKind::Manual), &data)
+            .expect("resave");
+        let cal = crate::data::calibration();
+        let loaded = Host::from_save(&cal, &store, "slot").expect("loads");
+        assert!(
+            loaded
+                .notices
+                .iter()
+                .any(|n| n.contains("Results may differ")),
+            "{:?}",
+            loaded.notices
+        );
+    }
+
+    #[test]
+    fn a_save_without_calibration_or_engine_keys_still_loads() {
+        let dir = std::env::temp_dir().join(format!("host-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (h, store) = saved_game(&dir, "old");
+        let id = SlotId::new("slot").expect("slot");
+        let mut data = h.save_data().expect("data");
+        data.meta.remove("calibration");
+        data.meta.remove("engine");
+        store
+            .save(&id, h.manifest(SaveKind::Manual), &data)
+            .expect("resave");
+        let cal = crate::data::calibration();
+        let loaded = Host::from_save(&cal, &store, "slot").expect("old save loads");
+        assert!(
+            !loaded
+                .notices
+                .iter()
+                .any(|n| n.contains("Results may differ"))
+        );
+    }
 
     fn session(roles: Roles) -> Host {
         let g = NewGame {
