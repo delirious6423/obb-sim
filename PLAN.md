@@ -181,6 +181,21 @@ Design (decided)
 - [x] Gate (`cargo test --release -p connect --test roles_gate -- --ignored --nocapture`): 50 seasons x 5 seeds x role mixes (AI, scripted human incl. adversarial policies); no runaway payroll, no insolvency
 - [x] Re-run older gates: stability PASS, manager edge +0.0083 (z 5.4) PASS after a harness fix (reads the SeasonPlayed event, not events[0]). Ladder hoarder FAILS (see FAILING GATES). Final reviewer round: see Log.
 
+## Phase 7b: base game completeness (owner order, 2026-10-12; NO online work until this is done)
+
+Owner decisions (2026-10-12): no online league until every local-game issue is fixed. Reference game is OOTP 27 (see `OOTP_BENCHMARK.md`, sourced; OOTP 23 manual assumed to carry into 27). Whenever in doubt, anchor rates to real MLB statistics and cite them. Efficiency rule: nothing here may slow the sim or the UI (benchmark `cargo run --release -p cli -- bench 20` and `crates/host/examples/bench.rs` before and after each batch; a full season stays about 0.13 s).
+- Debt: no bailout. A club with cash < 0 cannot sign (minimum-salary roster fills only), cannot add payroll in trades, is held to the floor, pays no dividends; profit pays the debt down. Roles-gate criterion changed (owner-approved) from 'no club below -CREDIT' to 'every debt is repaid by the club's own profit, no deadlock'. CREDIT removed. Old rescue test deleted (owner-approved).
+- Trades: every difficulty trades; difficulty changes decision quality only. Easy AIs giving assets away is part of the game (owner: accepted). Real anchor: about 54 trades a season league-wide (FanGraphs 1996-2000, 3.6 per club), 21-25 consequential; deadline clustering.
+- Free-agent price: about $9-10M per WAR (FanGraphs $/WAR series: 9.0M 2014-16; 2023 10.2M and 2024 8.9M informal). Payroll-win correlation r about 0.4 in a typical year, weak in 2023. Inflation mechanic (our own design; OOTP's is undocumented): a league-wide salary scale that grows yearly and moves prices, floor, cap, min salary, revenue baselines and ticket reference together.
+
+Order of work
+- [ ] Batch 0 (running): debt rule merged with trading; usage/injury/fatigue/platoon/talent pipeline audit and build; draft_gate re-measured (definition change is the owner's call).
+- [ ] Batch 1: inflation + free-agent repricing to real $/WAR (fixes the hoarder gate); luxury tax; richer gate model (fan interest, home/away split, playoff gate, media, merchandise).
+- [ ] Batch 2: service time, minor-league options, waivers/DFA, 40-man; salary arbitration and extensions; Rule 5; international spending pool.
+- [ ] Batch 3: injury tiers and proneness, fatigue, platoon splits, park factors and weather; personality/morale (later).
+- [ ] Batch 4: richer trade AI (counteroffers, trading block, untouchables, draft-pick trading, deadline); scouting budget; calendar events; commands log in saves.
+- [ ] Re-run all gates on 5 seeds; independent reviewer; CI green on three platforms; then ask the owner to playtest.
+
 ## Draft bands (Phase 3)
 
 Sources (looked up; nothing downloaded into the repo). All count *signed* draftees unless noted; "reached the majors" = at least one major-league appearance or at-bat, measured years after the draft, so the studies are slightly right-censored (late arrivals missing).
