@@ -9,8 +9,19 @@ use crate::rating::Kind;
 use crate::state::{MIN_SALARY, World};
 use crate::util::noise;
 
-/// Runs per PA of a replacement-level player below the league average.
-pub const REPLACEMENT: f64 = 0.028;
+/// Runs per PA (batters) or per batter faced (pitchers) by which a
+/// replacement-level player trails the league average. FanGraphs and
+/// Baseball-Reference share one replacement level: 1,000 WAR in a 2,430-game
+/// season, 57% to position players and 43% to pitchers; a replacement batter
+/// is 17.5 runs below average per 600 PA (0.0292 a PA). The pitchers' figure
+/// is the one that gives them 43% of the league's WAR in this game.
+#[must_use]
+pub fn replacement(kind: Kind) -> f64 {
+    match kind {
+        Kind::Batter => 0.0292,
+        Kind::Pitcher => 0.0228,
+    }
+}
 
 fn level_sd(level: Level, has_team: bool) -> f64 {
     if !has_team {
@@ -89,7 +100,7 @@ const MARKET_KEY: u64 = 9_999;
 /// Expected wins above replacement over a season at quality `q`.
 #[must_use]
 pub fn war_of(kind: Kind, q: f64) -> f64 {
-    (q + REPLACEMENT) * volume(kind) / 10.0
+    (q + replacement(kind)) * volume(kind) / 10.0
 }
 
 /// Plate appearances (batters) or batters faced (pitchers) in a full season.
@@ -104,7 +115,7 @@ fn volume(kind: Kind) -> f64 {
 /// the inverse of [`war_of`]. Lets anyone read a price as a quality.
 #[must_use]
 pub fn quality_from_war(kind: Kind, war: f64) -> f64 {
-    war * 10.0 / volume(kind) - REPLACEMENT
+    war * 10.0 / volume(kind) - replacement(kind)
 }
 
 /// The market's (club-independent) view of a player's current quality: no

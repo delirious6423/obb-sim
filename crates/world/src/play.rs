@@ -11,7 +11,7 @@ use tactics::{TableManagerMaker, Tables};
 use crate::command::{Event, GameResult, Injury, Line, SeasonLine, SegmentEnd};
 use crate::player::{Level, Player, PlayerId};
 use crate::rating::{Kind, normal, uniform};
-use crate::scout::{REPLACEMENT, opinion};
+use crate::scout::{opinion, replacement};
 use crate::state::{InSeason, LeagueLine, Tactics, World};
 use crate::util::{stream, tag};
 
@@ -265,11 +265,11 @@ fn war(w: &World, kind: Kind, line: &Line, runs_per_out: f64) -> f64 {
                 + f64::from(b.doubles) * lw[4]
                 + f64::from(b.triples) * lw[5]
                 + f64::from(b.hr) * lw[6];
-            (sum - f64::from(b.pa) * v_lg + f64::from(b.pa) * REPLACEMENT) / 10.0
+            (sum - f64::from(b.pa) * v_lg + f64::from(b.pa) * replacement(Kind::Batter)) / 10.0
         }
         (Kind::Pitcher, Line::Pitch(p)) => {
             let saved = runs_per_out * f64::from(p.outs) - f64::from(p.r);
-            (saved + f64::from(p.bf) * REPLACEMENT) / 10.0
+            (saved + f64::from(p.bf) * replacement(Kind::Pitcher)) / 10.0
         }
         _ => 0.0,
     }
